@@ -713,7 +713,17 @@ function reanchor(comments) {
     const marks = wrapOffsets(map, hit.start, hit.end, comment.id);
     (marks.length ? resolved : orphaned).push(comment.id);
   }
-  post("eh:anchorStatus", { resolved, orphaned });
+  // A reviewer's note (Claude, Fable, …) is marked in its own colour.
+  for (const comment of comments) {
+    if (comment.reviewer) for (const mark of marksFor(comment.id)) mark.classList.add("eh-note");
+  }
+  // Where each anchor sits in the page, top to bottom, so the rail can follow the text.
+  const order = [];
+  for (const mark of document.querySelectorAll(`mark[${MARK_ATTR}]`)) {
+    const id = mark.getAttribute(MARK_ATTR);
+    if (!order.includes(id)) order.push(id);
+  }
+  post("eh:anchorStatus", { resolved, orphaned, order });
 }
 
 function activate(id, scroll) {
@@ -765,6 +775,9 @@ function boot() {
     mark[${MARK_ATTR}] { background: rgba(245,196,0,.32); border-radius: 2px; color: inherit; cursor: pointer; }
     mark[${MARK_ATTR}]:hover { background: rgba(243,176,0,.5); }
     mark[${MARK_ATTR}].eh-active { background: rgba(255,180,0,.55); }
+    mark[${MARK_ATTR}].eh-note { background: rgba(79,115,168,.20); }
+    mark[${MARK_ATTR}].eh-note:hover { background: rgba(79,115,168,.34); }
+    mark[${MARK_ATTR}].eh-note.eh-active { background: rgba(79,115,168,.45); }
     body[contenteditable]:focus { outline: none; }
     ::selection { background: rgba(245,196,0,.42); }
   `;
@@ -784,6 +797,9 @@ function boot() {
     if (isOurs(event.target) || resizing || Date.now() < suppressUntil) return;
     setTimeout(() => {
       if (settleSelection()) return;
+      // A click on a mark opens its card (the click handler posts eh:activate);
+      // it must not also start a new comment on the block around it.
+      if (event.target.closest && event.target.closest(`mark[${MARK_ATTR}]`)) return;
       const target = targetFor(event.target);
       if (target) {
         openElementCompose(target);
