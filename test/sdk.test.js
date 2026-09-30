@@ -323,3 +323,37 @@ test("a pasted image lands at the caret once the chrome confirms where it was sa
   assert.equal(row.before, "Before the image.");
   assert.match(row.after_html, /<img src="assets\/design-paste-1\.png"/);
 });
+
+test("reviewer notes get their own mark colour, and anchors report their order in the page", { skip }, async () => {
+  const { document, posts, fromChrome } = await bootSdk("<p>Eerste zin hier.</p><p>Tweede zin daar.</p><p>Derde zin ergens.</p>");
+  // Posted out of page order: the note on the third sentence comes first.
+  fromChrome({
+    type: "eh:anchors",
+    comments: [
+      { id: "n_3", kind: "selection", quote: "Derde zin", anchor: { prefix: "", quote: "Derde zin", suffix: "" }, reviewer: true },
+      { id: "c_2", kind: "selection", quote: "Tweede zin", anchor: { prefix: "", quote: "Tweede zin", suffix: "" } },
+      { id: "n_1", kind: "selection", quote: "Eerste zin", anchor: { prefix: "", quote: "Eerste zin", suffix: "" }, reviewer: true },
+      { id: "n_x", kind: "selection", quote: "Bestaat niet", anchor: { prefix: "", quote: "Bestaat niet", suffix: "" }, reviewer: true },
+    ],
+  });
+  const status = posts.filter((m) => m.type === "eh:anchorStatus").at(-1);
+  assert.deepEqual(status.order, ["n_1", "c_2", "n_3"], "top to bottom, as the marks sit in the page");
+  assert.deepEqual(status.orphaned, ["n_x"]);
+  const cls = (id) => document.querySelector(`mark[data-eh-mark="${id}"]`)?.classList.contains("eh-note");
+  assert.equal(cls("n_1"), true, "a reviewer's mark is coloured as such");
+  assert.equal(cls("c_2"), false, "your own comment keeps its colour");
+});
+
+test("clicking a mark activates its card and does not start a comment on the block around it", { skip }, async () => {
+  const { window, document, posts, fromChrome } = await bootSdk("<ol><li>Wij meten zelf. Een meter toetsen kan alleen wie zelf kan meten.</li></ol>");
+  fromChrome({
+    type: "eh:anchors",
+    comments: [{ id: "n_1", kind: "selection", quote: "Een meter toetsen", anchor: { prefix: "", quote: "Een meter toetsen", suffix: "" }, reviewer: true }],
+  });
+  const mark = document.querySelector('mark[data-eh-mark="n_1"]');
+  mark.dispatchEvent(new window.MouseEvent("mouseup", { bubbles: true }));
+  mark.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(posts.some((m) => m.type === "eh:activate" && m.id === "n_1"), "the card opens");
+  assert.ok(!posts.some((m) => m.type === "eh:compose"), "no new comment on the list item");
+});

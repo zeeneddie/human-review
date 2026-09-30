@@ -42,6 +42,7 @@ const state = {
   artifactToken: "",
   leftover: null,
   noteDrafts: new Map(),
+  markOrder: [],
 };
 
 /**
@@ -155,6 +156,7 @@ async function loadPage(key, { reload = true } = {}) {
   frame.setAttribute("sandbox", state.framePolicy.sandbox);
   state.orphans = new Set();
   state.noteDrafts = new Map();
+  state.markOrder = [];
   state.compose = null;
   state.active = null;
   state.sent = false;
@@ -220,7 +222,7 @@ const clock = () => new Date().toLocaleTimeString([], { hour: "numeric", minute:
 /** Everything the SDK should mark in the page: your comments and reviewer notes with a quote. */
 function anchorables() {
   if (!state.page) return [];
-  const notes = (state.page.notes || []).filter((n) => n.anchor).map((n) => ({ id: n.id, kind: "selection", quote: n.quote, anchor: n.anchor }));
+  const notes = (state.page.notes || []).filter((n) => n.anchor).map((n) => ({ id: n.id, kind: "selection", quote: n.quote, anchor: n.anchor, reviewer: true }));
   return [...(state.page.comments || []), ...notes];
 }
 
@@ -295,8 +297,11 @@ function noteCard(note) {
   const draft = noteDraft(note);
   const verdict = noteVerdict(note, draft);
   const locked = !!note.sent;
+  // Only the card you are working on is open; the rest is one line, so a page
+  // with many notes stays scannable.
+  const open = state.active === note.id;
   const card = document.createElement("div");
-  card.className = `comment note${state.active === note.id ? " active" : ""}`;
+  card.className = `comment note${open ? " active" : " compact"}`;
   card.dataset.id = note.id;
 
   const head = document.createElement("div");
@@ -326,7 +331,7 @@ function noteCard(note) {
     who.append(badge);
   }
   head.append(who);
-  if (note.anchor) {
+  if (note.anchor && open) {
     const jump = document.createElement("button");
     jump.type = "button";
     jump.className = "jump";
@@ -339,15 +344,56 @@ function noteCard(note) {
   }
   card.append(head);
 
+  // Akkoord · Niet doen · where it stands — the same row, open or compact.
+  const actions = document.createElement("div");
+  actions.className = "note-actions";
+  const accept = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = draft.checked;
+  box.disabled = locked;
+  box.addEventListener("click", (event) => event.stopPropagation());
+  box.addEventListener("change", () => {
+    draft.checked = box.checked;
+    if (box.checked) draft.niet = false;
+    saveNote(note, { now: true });
+  });
+  accept.append(box, "Akkoord");
+  accept.addEventListener("click", (event) => event.stopPropagation());
+  const decline = document.createElement("button");
+  decline.type = "button";
+  decline.className = `btn-ghost${draft.niet ? " on" : ""}`;
+  decline.textContent = "Niet doen";
+  decline.disabled = locked;
+  decline.addEventListener("click", (event) => {
+    event.stopPropagation();
+    draft.niet = !draft.niet;
+    if (draft.niet) draft.checked = false;
+    saveNote(note, { now: true });
+  });
+  const status = document.createElement("span");
+  status.className = `verdict${verdict ? ` ${verdict}` : ""}`;
+  status.textContent = verdict ? VERDICT_LABEL[verdict] : "nog geen antwoord";
+  if (note.suggestion) actions.append(accept);
+  actions.append(decline, status);
+
+  const body = document.createElement("p");
+  body.className = "body";
+  body.textContent = note.text;
+
+  if (!open) {
+    card.append(body, actions);
+    // Opening a compact card also brings its quote into view.
+    card.addEventListener("click", () => setActive(note.id, !!note.anchor));
+    return card;
+  }
+
   if (note.quote) {
     const quote = document.createElement("p");
     quote.className = "quote";
     quote.textContent = tidy(note.quote, 140);
     card.append(quote);
   }
-  const body = document.createElement("p");
-  body.className = "body";
-  body.textContent = note.text;
   card.append(body);
 
   const field = (name, value, placeholder) => {
@@ -377,37 +423,6 @@ function noteCard(note) {
     label.textContent = "Suggestie — pas aan als je het anders wilt";
     card.append(label, field("suggestion", draft.suggestion, ""));
   }
-
-  const actions = document.createElement("div");
-  actions.className = "note-actions";
-  const accept = document.createElement("label");
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.checked = draft.checked;
-  box.disabled = locked;
-  box.addEventListener("click", (event) => event.stopPropagation());
-  box.addEventListener("change", () => {
-    draft.checked = box.checked;
-    if (box.checked) draft.niet = false;
-    saveNote(note, { now: true });
-  });
-  accept.append(box, "Akkoord");
-  const decline = document.createElement("button");
-  decline.type = "button";
-  decline.className = `btn-ghost${draft.niet ? " on" : ""}`;
-  decline.textContent = "Niet doen";
-  decline.disabled = locked;
-  decline.addEventListener("click", (event) => {
-    event.stopPropagation();
-    draft.niet = !draft.niet;
-    if (draft.niet) draft.checked = false;
-    saveNote(note, { now: true });
-  });
-  const status = document.createElement("span");
-  status.className = `verdict${verdict ? ` ${verdict}` : ""}`;
-  status.textContent = verdict ? VERDICT_LABEL[verdict] : "nog geen antwoord";
-  if (note.suggestion) actions.append(accept);
-  actions.append(decline, status);
   card.append(actions);
 
   const replyLabel = document.createElement("p");
@@ -417,6 +432,30 @@ function noteCard(note) {
 
   card.addEventListener("click", () => setActive(note.id, false));
   return card;
+}
+
+/**
+ * Notes in reading order: loose notes (no quote, or one that no longer
+ * matches) first, then top to bottom as their marks sit in the page.
+ */
+function sortedNotes(notes) {
+  const loose = (n) => !n.anchor || state.orphans.has(n.id);
+  const at = (n) => {
+    const i = state.markOrder.indexOf(n.id);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  return [...notes].sort((a, b) => Number(loose(b)) - Number(loose(a)) || at(a) - at(b) || a.createdAt - b.createdAt);
+}
+
+/** Accept every open suggestion on this page in one go, one answer at a time. */
+async function acceptAll() {
+  for (const note of state.page.notes || []) {
+    if (!note.suggestion || note.response || note.sent) continue;
+    const draft = noteDraft(note);
+    if (draft.niet || draft.reply.trim() || draft.checked) continue;
+    draft.checked = true;
+    await saveNote(note, { now: true });
+  }
 }
 
 // -------------------------------------------------------------------- render
@@ -467,7 +506,20 @@ function renderRail(page) {
   const list = $("cards");
   list.textContent = "";
   // Reviewer notes first: they wait for your answer.
-  for (const note of notes) list.append(noteCard(note));
+  const acceptable = notes.filter((n) => n.suggestion && !n.response && !n.sent && !noteDraft(n).checked && !noteDraft(n).niet);
+  if (acceptable.length >= 2) {
+    const bar = document.createElement("div");
+    bar.className = "notes-bar";
+    const all = document.createElement("button");
+    all.type = "button";
+    all.className = "btn-ghost";
+    all.textContent = `Alles akkoord (${acceptable.length})`;
+    all.title = "Neem alle openstaande suggesties op deze pagina over zoals ze zijn";
+    all.addEventListener("click", acceptAll);
+    bar.append(all);
+    list.append(bar);
+  }
+  for (const note of sortedNotes(notes)) list.append(noteCard(note));
   for (const comment of comments) {
     const card = document.createElement("div");
     card.className = `comment${state.active === comment.id ? " active" : ""}`;
@@ -873,6 +925,9 @@ function setActive(id, scroll) {
   state.active = id;
   toFrame({ type: "eh:activate", id, scroll: !!scroll });
   render();
+  // Clicked in the text: bring its card into view in the rail.
+  const card = document.querySelector(`#cards [data-id="${CSS.escape(id)}"]`);
+  if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 // ------------------------------------------------------------------ compose
@@ -1001,6 +1056,7 @@ window.addEventListener("message", async (event) => {
       break;
     case "eh:anchorStatus":
       state.orphans = new Set(msg.orphaned || []);
+      state.markOrder = msg.order || [];
       render();
       break;
     case "eh:notInView":

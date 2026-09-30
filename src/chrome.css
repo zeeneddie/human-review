@@ -533,3 +533,11 @@ body.collapsed .handle { right: 0; }
 .note-actions .verdict.akkoord, .note-actions .verdict.aangepast { color: var(--green); }
 .note-actions .verdict.niet { color: var(--danger); }
 .note-actions button.on { border-color: var(--danger); color: var(--danger); }
+
+/* Veel kaarten: alleen de actieve staat open, de rest is één regel. */
+.comment.note.compact { padding-top: 9px; padding-bottom: 9px; cursor: pointer; }
+.comment.note.compact .comment-head { margin-bottom: 4px; }
+.comment.note.compact .body { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.comment.note.compact .body:hover { background: none; box-shadow: none; }
+.comment.note.compact .note-actions { margin-top: 6px; }
+.notes-bar { display: flex; justify-content: flex-end; margin: 0 0 8px; }
