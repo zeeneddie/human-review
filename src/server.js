@@ -562,7 +562,7 @@ export function createServer() {
           : "") +
         (hasReplies
           ? "`replies` answer reviewer notes posted with `human-review notes`: `akkoord` = apply `final_suggestion` at the " +
-            "note's `quote` (or do what the note says when it has none), `aangepast` = apply the human's own " +
+            "note's `quote`, `aangepast` = apply the human's own " +
             "`final_suggestion` instead, `niet` = leave it, `antwoord` = the human answered in `reply`; act on it. " +
             "A `reply` always counts. "
           : "") +
@@ -1278,6 +1278,9 @@ export function createServer() {
             if (!NOTE_VERDICTS.has(body.verdict)) return json(res, 400, { error: `unknown verdict: ${body.verdict}` });
             const reply = String(body.reply || "").trim();
             const suggestion = String(body.suggestion || "");
+            if ((body.verdict === "akkoord" || body.verdict === "aangepast") && !note.suggestion) {
+              return json(res, 400, { error: "this note has no suggestion to accept; answer or decline it" });
+            }
             if (body.verdict === "aangepast" && !suggestion.trim()) return json(res, 400, { error: "aangepast needs your suggestion" });
             if (body.verdict === "antwoord" && !reply) return json(res, 400, { error: "antwoord needs a reply" });
             response = { verdict: body.verdict, ...(reply ? { reply } : {}), ...(body.verdict === "aangepast" ? { suggestion } : {}) };

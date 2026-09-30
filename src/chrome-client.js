@@ -52,7 +52,7 @@ const state = {
 function handoffPrompt(pollCommand) {
   const cmd = String(pollCommand || "").trim();
   if (!cmd) return "";
-  return `Start \`${cmd}\` in the background and end your turn; it exits when I hit Send. Apply the feedback it prints, then start it again with --ack.`;
+  return `Start \`${cmd}\` op de achtergrond en beëindig je beurt; hij stopt zodra ik op Verstuur druk. Verwerk de feedback die hij print en start hem daarna opnieuw met --ack.`;
 }
 
 // ------------------------------------------------------------------- server
@@ -244,7 +244,8 @@ function noteDraft(note) {
 /** The draft as an answer: akkoord / aangepast / niet / antwoord, or null when there is none. */
 function noteVerdict(note, draft) {
   if (draft.niet) return "niet";
-  if (draft.checked) return note.suggestion && draft.suggestion.trim() !== note.suggestion.trim() ? "aangepast" : "akkoord";
+  // Only a suggestion can be accepted; a note without one is answered or declined.
+  if (draft.checked && note.suggestion) return draft.suggestion.trim() !== note.suggestion.trim() ? "aangepast" : "akkoord";
   return draft.reply.trim() ? "antwoord" : null;
 }
 
@@ -390,7 +391,7 @@ function noteCard(note) {
     if (box.checked) draft.niet = false;
     saveNote(note, { now: true });
   });
-  accept.append(box, note.suggestion ? "Akkoord" : "Doen");
+  accept.append(box, "Akkoord");
   const decline = document.createElement("button");
   decline.type = "button";
   decline.className = `btn-ghost${draft.niet ? " on" : ""}`;
@@ -405,7 +406,8 @@ function noteCard(note) {
   const status = document.createElement("span");
   status.className = `verdict${verdict ? ` ${verdict}` : ""}`;
   status.textContent = verdict ? VERDICT_LABEL[verdict] : "nog geen antwoord";
-  actions.append(accept, decline, status);
+  if (note.suggestion) actions.append(accept);
+  actions.append(decline, status);
   card.append(actions);
 
   const replyLabel = document.createElement("p");
@@ -724,8 +726,8 @@ function renderRail(page) {
   // otherwise dead-end silently, so hand over the exact command to run.
   $("agentLine").hidden = !(delivered || queued);
   $("agentText").textContent = queued
-    ? "Agent is still on your last batch — this one ships with its next poll"
-    : "Feedback delivered — page reloads when fixes land";
+    ? "De agent werkt nog aan je vorige batch — deze gaat mee met zijn volgende poll"
+    : "Feedback afgeleverd — de pagina herlaadt zodra de wijzigingen er zijn";
 
   // --- feedback left over from an earlier review of this page
   const leftover = state.leftover;
@@ -1213,7 +1215,7 @@ function showEnded(message) {
   const title = document.createElement("h2");
   title.textContent = "Review ended";
   const line = document.createElement("p");
-  line.textContent = message || "Unsent feedback is kept; next time you open this page you can restore or discard it. You can close this tab.";
+  line.textContent = message || "Niet-verstuurde feedback blijft bewaard; open je deze pagina opnieuw, dan kun je hem herstellen of weggooien. Je kunt dit tabblad sluiten.";
   overlay.append(title, line);
   document.body.append(overlay);
 }
@@ -1236,10 +1238,10 @@ window.addEventListener("pagehide", () => {
 $("endReview").addEventListener("click", async () => {
   const page = state.page;
   const otherTotal = (state.others || []).reduce((sum, o) => sum + o.count, 0);
-  const unsent = page ? (page.comments || []).length + (page.edits || []).length + otherTotal : 0;
+  const unsent = page ? (page.comments || []).length + (page.edits || []).length + ((page.unsent && page.unsent.replies) || 0) + otherTotal : 0;
   const message = unsent
-    ? `End this review? ${unsent} unsent ${unsent === 1 ? "item" : "items"} will be kept for next time.`
-    : "End this review? The waiting agent will be told to stop polling.";
+    ? `Review beëindigen? ${unsent} niet-verstuurde ${unsent === 1 ? "reactie blijft" : "reacties blijven"} bewaard voor de volgende keer.`
+    : "Review beëindigen? De wachtende agent krijgt te horen dat hij kan stoppen.";
   if (!window.confirm(message)) return;
   // Ship anything still sitting in the SDK's debounce windows first.
   await flushFrame();
@@ -1255,9 +1257,9 @@ $("handoffCopy").addEventListener("click", async (event) => {
   const button = event.currentTarget;
   try {
     await navigator.clipboard.writeText($("handoffCmd").textContent);
-    button.textContent = "Copied";
+    button.textContent = "Gekopieerd";
     setTimeout(() => {
-      button.textContent = "Copy prompt";
+      button.textContent = "Kopieer opdracht";
     }, 1600);
   } catch {
     toast("Couldn't copy — select the prompt and copy it manually");
@@ -1331,7 +1333,7 @@ function connect() {
     try {
       reason = JSON.parse(event.data).reason || reason;
     } catch {}
-    showEnded(reason === "window_closed" ? "This tab was away too long, so the review ended. Unsent feedback is kept; reopen the page to restore or discard it." : undefined);
+    showEnded(reason === "window_closed" ? "Dit tabblad was te lang weg, dus de review is beëindigd. Niet-verstuurde feedback blijft bewaard; open de pagina opnieuw om hem te herstellen of weg te gooien." : undefined);
   });
   source.addEventListener("reload", () => {
     const hadEdits = state.page ? state.page.edits.length : 0;
@@ -1371,7 +1373,7 @@ function connect() {
     rebootstrap().then((ok) => {
       if (finished) return;
       if (ok) connect();
-      else showEnded("This review session expired. Run human-review on this page again to reopen it.");
+      else showEnded("Deze reviewsessie is verlopen. Draai human-review opnieuw op deze pagina om hem te heropenen.");
     });
   };
 }
@@ -1386,7 +1388,7 @@ function connect() {
 
   const bootstrap = await api(`/api/session/${state.sessionId}/page`).catch(() => null);
   if (!bootstrap) {
-    showEnded("This review session has ended. Run human-review on the page again to reopen it.");
+    showEnded("Deze reviewsessie is beëindigd. Draai human-review opnieuw op de pagina om hem te heropenen.");
     return;
   }
   if (bootstrap.page) state.pollCommand = bootstrap.page.pollCommand;

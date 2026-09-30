@@ -167,6 +167,13 @@ test("an answer can be taken back, and invalid answers are refused", async (t) =
   assert.equal((await answer(port, token, opened.key, id, { verdict: "antwoord" })).status, 400);
   assert.equal((await answer(port, token, opened.key, "n_onbekend", { verdict: "akkoord" })).status, 404);
 
+  // A question has nothing to accept: it is answered or declined.
+  const [question] = j(await post(port, token, [{ page: file, text: "Gaat het deck mee?" }])).notes.map((x) => x.id);
+  assert.equal((await answer(port, token, opened.key, question, { verdict: "akkoord" })).status, 400);
+  assert.equal((await answer(port, token, opened.key, question, { verdict: "aangepast", suggestion: "x" })).status, 400);
+  assert.equal((await answer(port, token, opened.key, question, { verdict: "antwoord", reply: "Ja." })).status, 200);
+  await answer(port, token, opened.key, question, {});
+
   await answer(port, token, opened.key, id, { verdict: "akkoord" });
   assert.equal((await state(port, token, opened.key)).unsent.replies, 1);
   await answer(port, token, opened.key, id, {});

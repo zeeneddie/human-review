@@ -197,14 +197,17 @@ EOF
 The user ticks a note to accept it, edits the suggestion first, declines it,
 or answers it. Answers arrive in the batch as `replies`, per page:
 
-- `akkoord`: apply `final_suggestion` at the `quote`, or do what the note says
-  when it had no suggestion.
+- `akkoord`: apply `final_suggestion` at the `quote`. Only a note with a
+  `suggestion` can be accepted; one without is answered or declined.
 - `aangepast`: apply the user's own `final_suggestion` instead of yours.
 - `niet`: leave it.
 - `antwoord`: the user answered in `reply`; act on it.
 
 A `reply` always counts, whatever the verdict. After `--ack`, answered notes
 disappear and unanswered ones stay in the rail.
+
+After posting notes, start the background poll right away. Without a poll,
+the user's Send lands on "Verstuurd — maar er luistert nog geen agent".
 
 ## Better edit labels (optional)
 
