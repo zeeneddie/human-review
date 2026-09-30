@@ -22,6 +22,7 @@
   --danger-soft: #f6ecea;
   --amber: #c99500;
   --green: #7d9370;
+  --agent: #4f73a8;
   --btn-bg: #1b1a16;
   --btn-fg: #fbfaf7;
   --rail-w: 352px;
@@ -50,6 +51,7 @@
   --danger-soft: #3a2320;
   --amber: #d9a520;
   --green: #8ea37f;
+  --agent: #86a7d8;
   --btn-bg: #f0ede6;
   --btn-fg: #1b1a16;
 }
@@ -517,3 +519,17 @@ body.collapsed .handle { right: 0; }
 
 .send-all { margin-top: 8px; background: transparent; color: var(--strong-txt); border-color: var(--strong-border); }
 .send-all:hover:not(:disabled) { background: var(--soft); }
+
+/* Opmerkingen van een reviewer (Claude, Fable, ChatGPT, …) met jouw antwoord. */
+.comment.note { box-shadow: inset 2px 0 0 var(--agent); }
+.comment.note.active { box-shadow: inset 3px 0 0 var(--agent); }
+.who .author { color: var(--agent); font-weight: 600; }
+.note-label { margin: 10px 0 4px; color: var(--faint-2); font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; }
+.note textarea { width: 100%; min-height: 44px; font-size: 12.5px; resize: vertical; }
+.note textarea:disabled { opacity: .6; }
+.note-actions { display: flex; align-items: center; gap: 10px; margin-top: 9px; font-size: 12px; }
+.note-actions label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.note-actions .verdict { margin-left: auto; color: var(--faint-2); font-size: 11px; }
+.note-actions .verdict.akkoord, .note-actions .verdict.aangepast { color: var(--green); }
+.note-actions .verdict.niet { color: var(--danger); }
+.note-actions button.on { border-color: var(--danger); color: var(--danger); }

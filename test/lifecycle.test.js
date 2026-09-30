@@ -123,7 +123,7 @@ test("closing the tab ends the review and releases the waiting poll with the uns
   const answer = await waiting.promise;
   assert.equal(answer.status, "closed");
   assert.equal(answer.reason, "window_closed");
-  assert.deepEqual(answer.unsent, { comments: 1, edits: 1 });
+  assert.deepEqual(answer.unsent, { comments: 1, edits: 1, replies: 0 });
   assert.match(answer.next_step, /do not run the poll command again/);
   assert.match(answer.next_step, /2 unsent items/);
 
@@ -430,7 +430,7 @@ test("feedback the agent already has is marked sent and no longer counted, on th
   let page = j(await request(port, token, { route: `/api/page/${opened.key}?session=${opened.sessionId}` }));
   assert.deepEqual(page.comments.map((c) => c.sent), [true]);
   assert.deepEqual(page.edits.map((e) => e.sent), [true]);
-  assert.deepEqual(page.unsent, { comments: 0, edits: 0 });
+  assert.deepEqual(page.unsent, { comments: 0, edits: 0, replies: 0 });
 
   // Navigate to a second page: the first must not show up as sendable.
   const moved = j(await request(port, token, { method: "POST", route: `/api/session/${opened.sessionId}/navigate`, body: { href: "multi-b.html" } }));
@@ -445,7 +445,7 @@ test("feedback the agent already has is marked sent and no longer counted, on th
   assert.deepEqual(again.others.map((o) => o.count), [1]);
   page = j(await request(port, token, { route: `/api/page/${opened.key}` }));
   assert.deepEqual(page.comments.map((c) => c.sent), [true, false]);
-  assert.deepEqual(page.unsent, { comments: 1, edits: 0 });
+  assert.deepEqual(page.unsent, { comments: 1, edits: 0, replies: 0 });
 
   // After the ack the delivered items are gone and only the new one remains.
   const acked = poll(port, token, first, { ack: true });

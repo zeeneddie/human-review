@@ -249,6 +249,11 @@ export function createServer() {
 
   const isSentEdit = (edit, coverage) => (edit.updatedAt || edit.at || 0) < coverage.sentAt;
 
+  /** Reviewer notes you answered whose answer the agent does not have yet. */
+  const unsentReplies = (page, coverage) => (page.notes || []).filter((n) => n.response && !coverage.ids.has(n.id));
+
+  const NOTE_VERDICTS = new Set(["akkoord", "aangepast", "niet", "antwoord"]);
+
   /** Unsent feedback on every page reachable from this entry target. */
   function unsentCounts(entryKey) {
     const keys = new Set([entryKey]);
@@ -258,14 +263,16 @@ export function createServer() {
     }
     let comments = 0;
     let edits = 0;
+    let replies = 0;
     for (const k of keys) {
       const page = store.page(k);
       if (!page) continue;
       const coverage = coverageFor(k);
       comments += page.comments.filter((c) => !coverage.ids.has(c.id)).length;
       edits += page.edits.filter((e) => !isSentEdit(e, coverage)).length;
+      replies += unsentReplies(page, coverage).length;
     }
-    return { comments, edits };
+    return { comments, edits, replies };
   }
 
   const CLOSE_REASONS = {
@@ -276,7 +283,7 @@ export function createServer() {
 
   function closedPayload(entryKey, reason) {
     const unsent = unsentCounts(entryKey);
-    const left = unsent.comments + unsent.edits;
+    const left = unsent.comments + unsent.edits + unsent.replies;
     return {
       status: "closed",
       reason,
@@ -383,7 +390,8 @@ export function createServer() {
       const coveredUntil = covered.reduce((max, entry) => Math.max(max, entry.sentAt || 0), 0);
       const comments = page.comments.filter((c) => !coveredIds.has(c.id));
       const edits = page.edits.filter((e) => (e.updatedAt || e.at || 0) >= coveredUntil);
-      if (!comments.length && !edits.length) continue;
+      const answered = (page.notes || []).filter((n) => n.response && !coveredIds.has(n.id));
+      if (!comments.length && !edits.length && !answered.length) continue;
       const markdown = page.kind !== "url" && isMarkdown(page.file);
       out.push({
         key,
@@ -412,6 +420,19 @@ export function createServer() {
           ...(Array.isArray(e.staged_assets) && e.staged_assets.length ? { staged_assets: e.staged_assets } : {}),
           ...(e.truncated ? { truncated: true } : {}),
         })),
+        // Your answers to reviewer notes: accepted as is, accepted with your
+        // own wording, declined, or just answered.
+        replies: answered.map((n) => ({
+          note_id: n.id,
+          author: n.author,
+          quote: n.quote,
+          note: n.text,
+          ...(n.suggestion ? { suggestion: n.suggestion } : {}),
+          verdict: n.response.verdict,
+          ...(n.response.reply ? { reply: n.response.reply } : {}),
+          ...(n.response.verdict === "akkoord" && n.suggestion ? { final_suggestion: n.suggestion } : {}),
+          ...(n.response.verdict === "aangepast" ? { final_suggestion: n.response.suggestion } : {}),
+        })),
       });
     }
     return out;
@@ -425,7 +446,10 @@ export function createServer() {
       const page = store.page(key);
       if (!page) continue;
       const coverage = coverageFor(key);
-      const count = page.comments.filter((c) => !coverage.ids.has(c.id)).length + page.edits.filter((e) => !isSentEdit(e, coverage)).length;
+      const count =
+        page.comments.filter((c) => !coverage.ids.has(c.id)).length +
+        page.edits.filter((e) => !isSentEdit(e, coverage)).length +
+        unsentReplies(page, coverage).length;
       if (!count) continue;
       out.push({
         key,
@@ -452,14 +476,20 @@ export function createServer() {
       const coverage = coverageFor(key);
       const comments = page.comments.filter((c) => !coverage.ids.has(c.id)).length;
       const edits = page.edits.filter((e) => !isSentEdit(e, coverage)).length;
-      const inFlight = page.comments.some((c) => coverage.ids.has(c.id)) || page.edits.some((e) => isSentEdit(e, coverage));
-      const status = comments + edits ? "open" : inFlight ? "verstuurd" : session.processed.has(key) ? "verwerkt" : "leeg";
+      const replies = unsentReplies(page, coverage).length;
+      const notes = page.notes || [];
+      const inFlight =
+        page.comments.some((c) => coverage.ids.has(c.id)) || page.edits.some((e) => isSentEdit(e, coverage)) || notes.some((n) => coverage.ids.has(n.id));
+      const status = comments + edits + replies ? "open" : inFlight ? "verstuurd" : session.processed.has(key) ? "verwerkt" : "leeg";
       out.push({
         key,
         filename: page.kind === "url" ? new URL(page.url).pathname || page.url : path.basename(page.file),
         file: page.kind === "url" ? page.url : page.file,
         comments,
         edits,
+        replies,
+        // Reviewer notes still waiting for your answer.
+        notes: notes.filter((n) => !n.response).length,
         status,
         active: key === session.activeKey,
       });
@@ -493,9 +523,10 @@ export function createServer() {
     const hasUrl = pages.some((p) => p.kind === "url");
     const hasSaved = pages.some((p) => p.edits_saved && p.edits.length);
     const hasTruncated = pages.some((p) => p.edits.some((e) => e.truncated));
+    const hasReplies = pages.some((p) => p.replies.length);
     const batch = {
       status: "feedback",
-      pages: pages.map(({ kind, file, url, markdown, edits_saved, comments, edits }) => ({
+      pages: pages.map(({ kind, file, url, markdown, edits_saved, comments, edits, replies }) => ({
         kind,
         file,
         ...(url ? { url } : {}),
@@ -503,6 +534,7 @@ export function createServer() {
         edits_saved,
         comments,
         edits,
+        ...(replies.length ? { replies } : {}),
       })),
       overall_note: note || "",
       sent_at: new Date().toISOString(),
@@ -528,6 +560,12 @@ export function createServer() {
             "When an edit includes `staged_assets`, copy each local image into the app's appropriate asset folder, replace its " +
             "temporary preview URL in `after_html`, and preserve the image at the user's insertion point. "
           : "") +
+        (hasReplies
+          ? "`replies` answer reviewer notes posted with `human-review notes`: `akkoord` = apply `final_suggestion` at the " +
+            "note's `quote`, `aangepast` = apply the human's own " +
+            "`final_suggestion` instead, `niet` = leave it, `antwoord` = the human answered in `reply`; act on it. " +
+            "A `reply` always counts. "
+          : "") +
         "When every page is updated, run the same poll command again with --ack to clear this " +
         "batch and wait for more.",
     };
@@ -538,7 +576,7 @@ export function createServer() {
       priorCleanup: already.length ? already : null,
       cleanup: pages.map((p) => ({
         key: p.key,
-        ids: p.comments.map((c) => c.id),
+        ids: [...p.comments.map((c) => c.id), ...p.replies.map((r) => r.note_id)],
         staged: p.edits.flatMap((edit) => (edit.staged_assets || []).map((asset) => asset.path)),
         sentAt: Date.now(),
       })),
@@ -723,9 +761,11 @@ export function createServer() {
       feedbackOnly: page.kind === "url",
       comments: page.comments.map((c) => ({ ...c, sent: coverage.ids.has(c.id) })),
       edits: page.edits.map((e) => ({ ...e, sent: isSentEdit(e, coverage) })),
+      notes: (page.notes || []).map((n) => ({ ...n, sent: coverage.ids.has(n.id) })),
       unsent: {
         comments: page.comments.filter((c) => !coverage.ids.has(c.id)).length,
         edits: page.edits.filter((e) => !isSentEdit(e, coverage)).length,
+        replies: unsentReplies(page, coverage).length,
       },
       canRevert: page.kind !== "url" && typeof page.pristine === "string" && page.pristine.length > 0,
       pollCommand: `${cliInvocation} poll ${shellQuote(pollTarget)}`,
@@ -968,6 +1008,42 @@ export function createServer() {
         });
       }
 
+      // --- a reviewer (agent) posts notes: one card per note in the rail
+      if (route === "/api/notes" && req.method === "POST") {
+        const body = await readBody(req);
+        const incoming = Array.isArray(body.notes) ? body.notes : [];
+        if (!incoming.length) return json(res, 400, { error: "no notes" });
+        const byKey = new Map();
+        for (const raw of incoming) {
+          const text = String(raw.text || "").trim();
+          if (!text) return json(res, 400, { error: "a note needs text" });
+          const target = canonicalTarget(String(raw.page || ""));
+          if (target.kind !== "file" || !fs.existsSync(target.value) || !/\.(x?html?|md|markdown)$/i.test(target.value)) {
+            return json(res, 400, { error: `Not a local html or markdown file: ${raw.page}` });
+          }
+          const page = store.pageForFile(target.value) || openFile(target.value);
+          const quote = String(raw.quote || "");
+          const note = {
+            id: uid("n"),
+            author: String(raw.author || "Claude").trim().slice(0, 40) || "Claude",
+            quote,
+            // Anchored on the quote alone; the SDK finds it in the rendered page.
+            anchor: quote ? { prefix: String(raw.prefix || ""), quote, suffix: String(raw.suffix || "") } : null,
+            text,
+            ...(raw.suggestion ? { suggestion: String(raw.suggestion) } : {}),
+            createdAt: Date.now(),
+          };
+          if (!byKey.has(page.key)) byKey.set(page.key, []);
+          byKey.get(page.key).push(note);
+        }
+        for (const [key, notes] of byKey) {
+          store.addNotes(key, notes);
+          watchPage(key);
+          for (const session of sessions.values()) if (session.visited.has(key)) emit(session, "refresh", {});
+        }
+        return json(res, 200, { ok: true, notes: [...byKey.values()].flat().map((n) => ({ id: n.id, author: n.author })) });
+      }
+
       // --- page data
       const pageMatch = route.match(/^\/api\/page\/([a-f0-9]+)(?:\/(\w+))?(?:\/(.+))?$/);
       if (pageMatch) {
@@ -1187,6 +1263,29 @@ export function createServer() {
           writePage(key, page.pristine);
           store.clearEdits(key);
           for (const session of sessionsForKey(key)) emit(session, "reload", { key });
+          return json(res, 200, { page: pageState(key) });
+        }
+
+        // --- your answer to a reviewer note: akkoord / aangepast / niet / antwoord, or null to undo
+        if (action === "note" && req.method === "POST" && tail) {
+          const body = await readBody(req);
+          const note = (store.page(key).notes || []).find((n) => n.id === tail);
+          if (!note) return json(res, 404, { error: "unknown note" });
+          // Once sent, an answer is the agent's until it acks; a change would go unseen.
+          if (coverageFor(key).ids.has(tail)) return json(res, 409, { error: "this answer is already with the agent" });
+          let response = null;
+          if (body.verdict) {
+            if (!NOTE_VERDICTS.has(body.verdict)) return json(res, 400, { error: `unknown verdict: ${body.verdict}` });
+            const reply = String(body.reply || "").trim();
+            const suggestion = String(body.suggestion || "");
+            if ((body.verdict === "akkoord" || body.verdict === "aangepast") && !note.suggestion) {
+              return json(res, 400, { error: "this note has no suggestion to accept; answer or decline it" });
+            }
+            if (body.verdict === "aangepast" && !suggestion.trim()) return json(res, 400, { error: "aangepast needs your suggestion" });
+            if (body.verdict === "antwoord" && !reply) return json(res, 400, { error: "antwoord needs a reply" });
+            response = { verdict: body.verdict, ...(reply ? { reply } : {}), ...(body.verdict === "aangepast" ? { suggestion } : {}) };
+          }
+          store.setNoteResponse(key, tail, response);
           return json(res, 200, { page: pageState(key) });
         }
 
