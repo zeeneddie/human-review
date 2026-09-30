@@ -417,10 +417,36 @@ export class Store {
    * Send have unknown ids; edits made (or retyped) after Send have a newer
    * timestamp than the batch. Both must survive for the next batch.
    */
+  /**
+   * Opmerkingen van een agent (of een andere reviewer: Claude, Fable, ChatGPT)
+   * op deze pagina. Ze zijn geen feedback van de mens; pas jouw reactie erop
+   * gaat terug naar de agent.
+   */
+  addNotes(key, notes) {
+    return this.update(key, (page) => {
+      page.notes = [...(page.notes || []), ...notes];
+    });
+  }
+
+  /** Zet of wis (null) jouw reactie op een opmerking. Null voor een onbekend id. */
+  setNoteResponse(key, id, response) {
+    let found = false;
+    const page = this.update(key, (p) => {
+      const note = (p.notes || []).find((n) => n.id === id);
+      if (!note) return;
+      found = true;
+      if (response) note.response = { ...response, at: Date.now() };
+      else delete note.response;
+    });
+    return found ? page : null;
+  }
+
   clearSent(key, ids, sentAt) {
     return this.update(key, (page) => {
       const drop = new Set(ids);
       page.comments = page.comments.filter((c) => !drop.has(c.id));
+      // A note whose answer the agent applied is done; unanswered ones stay.
+      if (page.notes) page.notes = page.notes.filter((n) => !drop.has(n.id));
       // >= not >: an edit stamped the same millisecond as the send may not
       // have shipped — resending it is harmless, dropping it loses work.
       page.edits = typeof sentAt === "number" ? page.edits.filter((e) => (e.updatedAt || e.at || 0) >= sentAt) : [];

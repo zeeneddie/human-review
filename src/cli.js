@@ -18,6 +18,8 @@ const HELP = `human-review ${pkg.version}
       --ack                        Acknowledge the last batch, then wait for the next
       --timeout <secs>             Give up with {"status":"timeout"} after this long (default: wait for Send)
   human-review status <target>        Report whether feedback is waiting, without blocking
+  human-review notes <target>         Post reviewer notes into the rail (JSON on stdin or --file)
+      --author <name>              Who wrote them (default Claude; also Fable, ChatGPT, …)
   human-review setup                  Teach Claude Code / Codex how to use human-review
   human-review setup --global         ...for every project, not just this one
 
@@ -300,9 +302,41 @@ async function statusCommand(input) {
     unsent: {
       comments: page ? page.comments.length : 0,
       edits: page ? page.edits.length : 0,
+      replies: page ? (page.notes || []).filter((n) => n.response).length : 0,
     },
   };
   process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+}
+
+/**
+ * Post reviewer notes into the rail: `human-review notes <target> [--file notes.json] [--author Fable]`.
+ * Reads a JSON array (or `{ "notes": [...] }`) from --file or stdin. Each note:
+ * `{ page?, quote?, text, suggestion?, author? }`; `page` defaults to the target
+ * and resolves from the current directory.
+ */
+async function notesCommand(input, { file = "", author = "" } = {}) {
+  const target = canonicalTarget(input);
+  if (target.kind !== "file") throw new Error("Notes go on local files.");
+  const raw = file ? fs.readFileSync(file, "utf8") : fs.readFileSync(0, "utf8");
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("Notes must be JSON: an array of { page, quote, text, suggestion, author }.");
+  }
+  const list = Array.isArray(parsed) ? parsed : parsed.notes;
+  if (!Array.isArray(list) || !list.length) throw new Error("No notes to post.");
+  const notes = list.map((n) => ({
+    ...n,
+    page: n.page ? canonicalTarget(n.page).value : target.value,
+    author: n.author || author || "Claude",
+  }));
+  const server = await ensureServer();
+  const res = await request(server, { method: "POST", path: "/api/notes", headers: { "content-type": "application/json" } }, { notes });
+  const body = JSON.parse(res.raw);
+  if (res.status !== 200) throw new Error(body.error || "Could not post the notes.");
+  const pages = new Set(notes.map((n) => path.basename(n.page)));
+  console.log(`${body.notes.length} ${body.notes.length === 1 ? "note" : "notes"} posted on ${[...pages].join(", ")}`);
 }
 
 // ---------------------------------------------------------------------- main
@@ -355,6 +389,16 @@ try {
     const file = argv.find((a, i) => i > 0 && !a.startsWith("-"));
     if (!file) throw new Error("Usage: human-review status <file-or-localhost-url>");
     await statusCommand(file);
+  } else if (argv[0] === "notes") {
+    const rest = argv.slice(1);
+    const valueOf = (flag) => {
+      const i = rest.indexOf(flag);
+      return i === -1 ? "" : rest[i + 1] || "";
+    };
+    const flagValues = new Set([valueOf("--file"), valueOf("--author")].filter(Boolean));
+    const file = rest.find((a) => !a.startsWith("-") && !flagValues.has(a));
+    if (!file) throw new Error("Usage: human-review notes <target> [--file notes.json] [--author <name>]");
+    await notesCommand(file, { file: valueOf("--file"), author: valueOf("--author") });
   } else if (argv[0] === "setup") {
     const isGlobal = argv.includes("--global") || argv.includes("-g");
     installSkills(process.cwd(), { global: isGlobal }).forEach((line) => console.log(line));

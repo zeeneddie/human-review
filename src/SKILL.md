@@ -178,6 +178,34 @@ One batch covers every page the user visited, grouped by file or localhost URL.
 - **Do not write a reply.** There is no chat. The user sees your work when the page
   reloads, which happens on its own the moment you save the file.
 
+## Your own remarks in the rail (reviewer notes)
+
+You can talk back. Post your findings, questions and suggested wording as
+cards in the review rail instead of in chat. Each note marks its `quote` in the
+page. The author is free, so other reviewers (Fable, ChatGPT) can post their
+reviews into the same rail under their own names:
+
+```sh
+npx -y human-review notes RAPPORT.md --author Claude <<'EOF'
+[{ "page": "RAPPORT.md", "quote": "exact rendered text", "text": "why",
+   "suggestion": "replacement wording (optional)" },
+ { "page": "DECK.md", "text": "a question without a quote" }]
+EOF
+```
+
+`quote` must be the exact rendered text, or the card shows as a loose note.
+The user ticks a note to accept it, edits the suggestion first, declines it,
+or answers it. Answers arrive in the batch as `replies`, per page:
+
+- `akkoord`: apply `final_suggestion` at the `quote`, or do what the note says
+  when it had no suggestion.
+- `aangepast`: apply the user's own `final_suggestion` instead of yours.
+- `niet`: leave it.
+- `antwoord`: the user answered in `reply`; act on it.
+
+A `reply` always counts, whatever the verdict. After `--ack`, answered notes
+disappear and unanswered ones stay in the rail.
+
 ## Better edit labels (optional)
 
 Name the sections you author and the user's edit list uses your names instead of

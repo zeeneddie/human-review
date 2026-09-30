@@ -41,6 +41,7 @@ const state = {
   framePolicy: null,
   artifactToken: "",
   leftover: null,
+  noteDrafts: new Map(),
 };
 
 /**
@@ -153,6 +154,7 @@ async function loadPage(key, { reload = true } = {}) {
   state.framePolicy = framePolicy(state.page, ARTIFACT_ORIGIN);
   frame.setAttribute("sandbox", state.framePolicy.sandbox);
   state.orphans = new Set();
+  state.noteDrafts = new Map();
   state.compose = null;
   state.active = null;
   state.sent = false;
@@ -213,18 +215,240 @@ function ago(ts) {
 
 const clock = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
+// ------------------------------------------------------------ reviewer notes
+
+/** Everything the SDK should mark in the page: your comments and reviewer notes with a quote. */
+function anchorables() {
+  if (!state.page) return [];
+  const notes = (state.page.notes || []).filter((n) => n.anchor).map((n) => ({ id: n.id, kind: "selection", quote: n.quote, anchor: n.anchor }));
+  return [...(state.page.comments || []), ...notes];
+}
+
+/**
+ * What you are doing with a note, kept in the browser while you type so a
+ * re-render never throws your words away. Seeded from the saved answer.
+ */
+function noteDraft(note) {
+  if (!state.noteDrafts.has(note.id)) {
+    const r = note.response || {};
+    state.noteDrafts.set(note.id, {
+      checked: r.verdict === "akkoord" || r.verdict === "aangepast",
+      niet: r.verdict === "niet",
+      suggestion: r.verdict === "aangepast" ? r.suggestion : note.suggestion || "",
+      reply: r.reply || "",
+    });
+  }
+  return state.noteDrafts.get(note.id);
+}
+
+/** The draft as an answer: akkoord / aangepast / niet / antwoord, or null when there is none. */
+function noteVerdict(note, draft) {
+  if (draft.niet) return "niet";
+  if (draft.checked) return note.suggestion && draft.suggestion.trim() !== note.suggestion.trim() ? "aangepast" : "akkoord";
+  return draft.reply.trim() ? "antwoord" : null;
+}
+
+const VERDICT_LABEL = { akkoord: "✓ Akkoord", aangepast: "✓ Aangepast", niet: "✗ Niet doen", antwoord: "↩ Antwoord" };
+
+const noteTimers = new Map();
+function saveNote(note, { now = false } = {}) {
+  clearTimeout(noteTimers.get(note.id)?.timer);
+  // Pinned now: a page switch inside the debounce must not send this answer elsewhere.
+  const key = state.key;
+  const draft = noteDraft(note);
+  const run = async () => {
+    const verdict = noteVerdict(note, draft);
+    try {
+      const result = await api(`/api/page/${key}/note/${note.id}`, {
+        method: "POST",
+        body: JSON.stringify(verdict ? { verdict, reply: draft.reply, suggestion: draft.suggestion } : {}),
+      });
+      if (state.key !== key) return;
+      state.page = result.page;
+      state.sent = false;
+      render();
+    } catch (err) {
+      toast(err.message);
+    }
+  };
+  if (now) return run();
+  const pending = { run, timer: setTimeout(() => {
+    noteTimers.delete(note.id);
+    run();
+  }, 400) };
+  noteTimers.set(note.id, pending);
+  return undefined;
+}
+
+/** Save every answer still in its debounce window — before a Send, so none is left behind. */
+function flushNotes() {
+  const runs = [...noteTimers.values()].map((pending) => {
+    clearTimeout(pending.timer);
+    return pending.run();
+  });
+  noteTimers.clear();
+  return Promise.all(runs);
+}
+
+function noteCard(note) {
+  const draft = noteDraft(note);
+  const verdict = noteVerdict(note, draft);
+  const locked = !!note.sent;
+  const card = document.createElement("div");
+  card.className = `comment note${state.active === note.id ? " active" : ""}`;
+  card.dataset.id = note.id;
+
+  const head = document.createElement("div");
+  head.className = "comment-head";
+  const who = document.createElement("span");
+  who.className = "who";
+  const author = document.createElement("span");
+  author.className = "author";
+  author.textContent = note.author;
+  const sep = document.createElement("span");
+  sep.className = "sep";
+  sep.textContent = "·";
+  const when = document.createElement("span");
+  when.className = "when";
+  when.textContent = ago(note.createdAt);
+  who.append(author, sep, when);
+  if (locked) {
+    const badge = document.createElement("span");
+    badge.className = "badge sent";
+    badge.textContent = "verstuurd";
+    who.append(badge);
+  }
+  if (!note.anchor || state.orphans.has(note.id)) {
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = "losse notitie";
+    who.append(badge);
+  }
+  head.append(who);
+  if (note.anchor) {
+    const jump = document.createElement("button");
+    jump.type = "button";
+    jump.className = "jump";
+    jump.textContent = "Ga naar";
+    jump.addEventListener("click", (event) => {
+      event.stopPropagation();
+      setActive(note.id, true);
+    });
+    head.append(jump);
+  }
+  card.append(head);
+
+  if (note.quote) {
+    const quote = document.createElement("p");
+    quote.className = "quote";
+    quote.textContent = tidy(note.quote, 140);
+    card.append(quote);
+  }
+  const body = document.createElement("p");
+  body.className = "body";
+  body.textContent = note.text;
+  card.append(body);
+
+  const field = (name, value, placeholder) => {
+    const area = document.createElement("textarea");
+    area.rows = 2;
+    area.value = value;
+    area.placeholder = placeholder;
+    area.disabled = locked;
+    area.dataset.noteId = note.id;
+    area.dataset.field = name;
+    area.addEventListener("click", (event) => event.stopPropagation());
+    area.addEventListener("input", () => {
+      draft[name] = area.value;
+      // Rewording the suggestion is accepting it in your own words.
+      if (name === "suggestion") {
+        draft.checked = true;
+        draft.niet = false;
+      }
+      saveNote(note);
+    });
+    return area;
+  };
+
+  if (note.suggestion) {
+    const label = document.createElement("p");
+    label.className = "note-label";
+    label.textContent = "Suggestie — pas aan als je het anders wilt";
+    card.append(label, field("suggestion", draft.suggestion, ""));
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "note-actions";
+  const accept = document.createElement("label");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = draft.checked;
+  box.disabled = locked;
+  box.addEventListener("click", (event) => event.stopPropagation());
+  box.addEventListener("change", () => {
+    draft.checked = box.checked;
+    if (box.checked) draft.niet = false;
+    saveNote(note, { now: true });
+  });
+  accept.append(box, note.suggestion ? "Akkoord" : "Doen");
+  const decline = document.createElement("button");
+  decline.type = "button";
+  decline.className = `btn-ghost${draft.niet ? " on" : ""}`;
+  decline.textContent = "Niet doen";
+  decline.disabled = locked;
+  decline.addEventListener("click", (event) => {
+    event.stopPropagation();
+    draft.niet = !draft.niet;
+    if (draft.niet) draft.checked = false;
+    saveNote(note, { now: true });
+  });
+  const status = document.createElement("span");
+  status.className = `verdict${verdict ? ` ${verdict}` : ""}`;
+  status.textContent = verdict ? VERDICT_LABEL[verdict] : "nog geen antwoord";
+  actions.append(accept, decline, status);
+  card.append(actions);
+
+  const replyLabel = document.createElement("p");
+  replyLabel.className = "note-label";
+  replyLabel.textContent = "Antwoord";
+  card.append(replyLabel, field("reply", draft.reply, `Antwoord aan ${note.author} (optioneel)…`));
+
+  card.addEventListener("click", () => setActive(note.id, false));
+  return card;
+}
+
 // -------------------------------------------------------------------- render
 
 function render() {
   const page = state.page;
   if (!page) return;
+  // Cards are rebuilt from scratch; put the cursor back where you were typing.
+  const focused = document.activeElement && document.activeElement.dataset ? document.activeElement : null;
+  const refocus = focused && focused.dataset.noteId
+    ? { id: focused.dataset.noteId, field: focused.dataset.field, start: focused.selectionStart, end: focused.selectionEnd }
+    : null;
+  try {
+    renderRail(page);
+  } finally {
+    if (refocus) {
+      const again = document.querySelector(`textarea[data-note-id="${CSS.escape(refocus.id)}"][data-field="${refocus.field}"]`);
+      if (again && !again.disabled) {
+        again.focus();
+        again.setSelectionRange(refocus.start, refocus.end);
+      }
+    }
+  }
+}
+
+function renderRail(page) {
   document.title = page.filename || 'human-review';
 
   const comments = page.comments || [];
   const edits = page.edits || [];
 
   $("count").textContent = String(comments.length);
-  $("empty").hidden = comments.length > 0 || !!state.compose;
+  const notes = page.notes || [];
+  $("empty").hidden = comments.length > 0 || notes.length > 0 || !!state.compose;
 
   // --- compose
   const composeWrap = $("compose");
@@ -240,6 +464,8 @@ function render() {
   // --- comment cards
   const list = $("cards");
   list.textContent = "";
+  // Reviewer notes first: they wait for your answer.
+  for (const note of notes) list.append(noteCard(note));
   for (const comment of comments) {
     const card = document.createElement("div");
     card.className = `comment${state.active === comment.id ? " active" : ""}`;
@@ -404,7 +630,7 @@ function render() {
   // --- send: only what the agent does not have yet counts. Items from a
   // batch that is delivered or queued stay listed until the ack, marked sent.
   const unsent = page.unsent || { comments: comments.length, edits: edits.length };
-  const pageTotal = unsent.comments + unsent.edits;
+  const pageTotal = unsent.comments + unsent.edits + (unsent.replies || 0);
   const otherTotal = others.reduce((sum, o) => sum + o.count, 0);
   const total = pageTotal + otherTotal;
   const pagesWithFeedback = (pageTotal ? 1 : 0) + others.length;
@@ -438,6 +664,9 @@ function render() {
       const parts = [];
       if (counts.edits) parts.push(`${counts.edits} ${counts.edits === 1 ? "wijziging" : "wijzigingen"}`);
       if (counts.comments) parts.push(`${counts.comments} ${counts.comments === 1 ? "opmerking" : "opmerkingen"}`);
+      if (counts.replies) parts.push(`${counts.replies} ${counts.replies === 1 ? "antwoord" : "antwoorden"}`);
+      const open = current ? notes.filter((n) => !n.response).length : entry.notes;
+      if (open) parts.push(`${open} te beantwoorden`);
       kind.textContent = parts.length ? parts.join(" · ") : { verstuurd: "verstuurd", verwerkt: "verwerkt" }[status] || "—";
       row.append(pip, label, kind);
       if (!current) row.addEventListener("click", () => gotoPage(entry.key));
@@ -571,7 +800,7 @@ function editComment(card, body, comment) {
         toast("The agent already has the old wording — this version ships with your next Send");
         // The retired id no longer marks anything; the new one takes over.
         toFrame({ type: "eh:remove", id: comment.id });
-        toFrame({ type: "eh:anchors", comments: state.page.comments });
+        toFrame({ type: "eh:anchors", comments: anchorables() });
       } else state.sent = false;
     } catch (err) {
       toast(err.message);
@@ -740,7 +969,7 @@ window.addEventListener("message", async (event) => {
 
   switch (msg.type) {
     case "eh:ready": {
-      toFrame({ type: "eh:anchors", comments: state.page ? state.page.comments : [] });
+      toFrame({ type: "eh:anchors", comments: anchorables() });
       if (state.reloading) {
         toFrame({ type: "eh:restoreScroll", x: state.scroll.x, y: state.scroll.y });
         state.reloading = false;
@@ -919,6 +1148,7 @@ async function gotoPage(key) {
 async function sendFeedback(scope) {
   try {
     await flushFrame();
+    await flushNotes();
     await api(`/api/page/${state.key}/send`, {
       method: "POST",
       body: JSON.stringify({ sessionId: state.sessionId, note: $("note").value.trim(), scope }),
@@ -1130,6 +1360,8 @@ function connect() {
     replacePage(state, await api(pageUrl(state.key, state.sessionId)));
     state.sent = false;
     render();
+    // New reviewer notes may have arrived: mark their quotes in the page.
+    toFrame({ type: "eh:anchors", comments: anchorables() });
   });
   source.onerror = () => {
     // A dropped connection reconnects on its own. A refused one (the server
