@@ -12,3 +12,4 @@ videos/
 
 # Local launch and review artifacts
 output/
+src/vendor/

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="nl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Bewerken</title>
+  <link rel="stylesheet" href="/vendor/editor.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: #fcfbf8; }
+    body { display: flex; flex-direction: column; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    #banner { display: none; padding: 10px 16px; background: #fff4d6; color: #5c4400; border-bottom: 1px solid #ecd9a3; font-size: 13px; }
+    #editor { flex: 1; min-height: 0; }
+    #bron { flex: 1; width: 100%; box-sizing: border-box; border: 0; padding: 28px max(24px, calc(50% - 390px)); background: #fcfbf8; color: #222;
+      font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; resize: none; outline: none; }
+    /* The tools live in the review's left bar; the editor's own toolbar and mode tabs stay hidden. */
+    .toastui-editor-defaultUI { border: 0; }
+    .toastui-editor-defaultUI-toolbar, .toastui-editor-mode-switch { display: none !important; }
+    /* Full width all the way down, so the scrollbar sits at the edge; the text is centred by padding. */
+    #editor, .toastui-editor-defaultUI, .toastui-editor-main, .toastui-editor-main-container,
+    .toastui-editor-ww-container, .toastui-editor-ww-container > .toastui-editor { width: 100% !important; }
+    .toastui-editor-ww-container { background: #fcfbf8; }
+    .toastui-editor-ww-container .ProseMirror { box-sizing: border-box; width: 100%; max-width: none; margin: 0;
+      padding: 28px max(24px, calc(50% - 390px)) 80px !important; font-size: 15px; }
+    .locked .ProseMirror { opacity: .7; }
+  </style>
+</head>
+<body>
+  <div id="banner" role="status"></div>
+  <div id="editor"></div>
+  <textarea id="bron" hidden spellcheck="false" aria-label="Markdown-bron"></textarea>
+  <script type="application/json" id="data">__DATA__</script>
+  <script type="module" src="/editor-client.js"></script>
+</body>
+</html>

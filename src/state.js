@@ -393,6 +393,37 @@ export class Store {
     });
   }
 
+  /**
+   * Blocks the editor already wrote into the file (`saved: true`). Typing
+   * saves the same block again and again, so a row still unsent that ends
+   * where this edit begins grows into it instead of adding a new row; an
+   * insert deleted again, or an edit typed back to what it was, disappears.
+   * `sentAt`: rows from before it are with the agent and stay as they are.
+   */
+  recordFileEdits(key, edits, sentAt = 0) {
+    return this.update(key, (page) => {
+      const now = Date.now();
+      for (const e of edits) {
+        const open = page.edits.find(
+          (r) => r.saved && (r.updatedAt || r.at || 0) >= sentAt && r.kind !== "deleted" && r.after === e.before && e.kind !== "inserted"
+        );
+        if (open) {
+          if (e.kind === "deleted" && open.kind === "inserted") {
+            page.edits = page.edits.filter((r) => r !== open);
+            continue;
+          }
+          open.after = e.after;
+          open.label = e.label;
+          if (e.kind === "deleted") open.kind = "deleted";
+          open.updatedAt = now;
+          if (open.kind === "edited" && open.before === open.after) page.edits = page.edits.filter((r) => r !== open);
+          continue;
+        }
+        page.edits.push({ label: e.label, kind: e.kind, before: e.before, after: e.after, saved: true, at: now, updatedAt: now });
+      }
+    });
+  }
+
   clearEdits(key) {
     return this.update(key, (page) => {
       page.edits = [];
@@ -412,11 +443,6 @@ export class Store {
     });
   }
 
-  /**
-   * Drop exactly what the acknowledged batch carried. Comments made after
-   * Send have unknown ids; edits made (or retyped) after Send have a newer
-   * timestamp than the batch. Both must survive for the next batch.
-   */
   /**
    * Opmerkingen van een agent (of een andere reviewer: Claude, Fable, ChatGPT)
    * op deze pagina. Ze zijn geen feedback van de mens; pas jouw reactie erop
@@ -441,6 +467,11 @@ export class Store {
     return found ? page : null;
   }
 
+  /**
+   * Drop exactly what the acknowledged batch carried. Comments made after
+   * Send have unknown ids; edits made (or retyped) after Send have a newer
+   * timestamp than the batch. Both must survive for the next batch.
+   */
   clearSent(key, ids, sentAt) {
     return this.update(key, (page) => {
       const drop = new Set(ids);

@@ -8,6 +8,67 @@
 </head>
 <body data-session="__SESSION_ID__" data-token="__TOKEN__">
   <div class="app">
+    <nav class="tools" id="tools" hidden aria-label="Bewerken">
+      <section class="tool-group modes">
+        <div class="rail-head tight"><span class="section">Weergave</span></div>
+        <div class="edit-list">
+          <button type="button" class="edit-row tool mode" data-mode="review" title="Markeringen, opmerkingen en kaarten"><span class="ico">◉</span><span class="label">Review</span></button>
+          <button type="button" class="edit-row tool mode" data-mode="grafisch" title="Kopjes, tabellen, lijsten en tekst"><span class="ico">✎</span><span class="label">Bewerken</span></button>
+          <button type="button" class="edit-row tool mode" data-mode="bron" title="Het Markdown-bestand zelf: voetnoten, links, YAML, HTML"><span class="ico">&lt;/&gt;</span><span class="label">Bron</span></button>
+        </div>
+      </section>
+      <section class="tool-group edit-only">
+        <div class="rail-head tight"><span class="section">Blok</span></div>
+        <div class="edit-list">
+          <button type="button" class="edit-row tool" data-cmd="heading" data-payload='{"level":1}'><span class="ico">H1</span><span class="label">Kop 1</span></button>
+          <button type="button" class="edit-row tool" data-cmd="heading" data-payload='{"level":2}'><span class="ico">H2</span><span class="label">Kop 2</span></button>
+          <button type="button" class="edit-row tool" data-cmd="heading" data-payload='{"level":3}'><span class="ico">H3</span><span class="label">Kop 3</span></button>
+          <button type="button" class="edit-row tool" data-cmd="heading" data-payload='{"level":4}'><span class="ico">H4</span><span class="label">Kop 4</span></button>
+          <button type="button" class="edit-row tool" data-cmd="paragraph"><span class="ico">¶</span><span class="label">Alinea</span></button>
+        </div>
+      </section>
+      <section class="tool-group edit-only">
+        <div class="rail-head tight"><span class="section">Tekst</span></div>
+        <div class="edit-list">
+          <button type="button" class="edit-row tool" data-cmd="bold"><span class="ico"><b>B</b></span><span class="label">Vet</span></button>
+          <button type="button" class="edit-row tool" data-cmd="italic"><span class="ico"><i>I</i></span><span class="label">Cursief</span></button>
+          <button type="button" class="edit-row tool" data-cmd="strike"><span class="ico"><s>S</s></span><span class="label">Doorhalen</span></button>
+          <button type="button" class="edit-row tool" data-cmd="code"><span class="ico">`</span><span class="label">Code in tekst</span></button>
+          <button type="button" class="edit-row tool" data-ask="link"><span class="ico">↗</span><span class="label">Link</span></button>
+        </div>
+      </section>
+      <section class="tool-group edit-only">
+        <div class="rail-head tight"><span class="section">Structuur</span></div>
+        <div class="edit-list">
+          <button type="button" class="edit-row tool" data-cmd="bulletList"><span class="ico">•</span><span class="label">Opsomming</span></button>
+          <button type="button" class="edit-row tool" data-cmd="orderedList"><span class="ico">1.</span><span class="label">Genummerd</span></button>
+          <button type="button" class="edit-row tool" data-cmd="taskList"><span class="ico">☐</span><span class="label">Takenlijst</span></button>
+          <button type="button" class="edit-row tool" data-cmd="indent"><span class="ico">⇥</span><span class="label">Inspringen</span></button>
+          <button type="button" class="edit-row tool" data-cmd="outdent"><span class="ico">⇤</span><span class="label">Uitspringen</span></button>
+          <button type="button" class="edit-row tool" data-cmd="blockQuote"><span class="ico">❝</span><span class="label">Citaat</span></button>
+          <button type="button" class="edit-row tool" data-cmd="codeBlock"><span class="ico">{ }</span><span class="label">Codeblok</span></button>
+          <button type="button" class="edit-row tool" data-cmd="hr"><span class="ico">―</span><span class="label">Scheidingslijn</span></button>
+          <button type="button" class="edit-row tool" data-ask="image"><span class="ico">▣</span><span class="label">Afbeelding</span></button>
+        </div>
+      </section>
+      <section class="tool-group edit-only">
+        <div class="rail-head tight"><span class="section">Tabel</span></div>
+        <div class="edit-list">
+          <button type="button" class="edit-row tool" data-cmd="addTable" data-payload='{"rowCount":3,"columnCount":3}'><span class="ico">▦</span><span class="label">Tabel invoegen</span></button>
+          <button type="button" class="edit-row tool" data-cmd="addRowToDown"><span class="ico">+</span><span class="label">Rij eronder</span></button>
+          <button type="button" class="edit-row tool" data-cmd="addColumnToRight"><span class="ico">+</span><span class="label">Kolom rechts</span></button>
+          <button type="button" class="edit-row tool" data-cmd="removeRow"><span class="ico">−</span><span class="label">Rij weg</span></button>
+          <button type="button" class="edit-row tool" data-cmd="removeColumn"><span class="ico">−</span><span class="label">Kolom weg</span></button>
+          <button type="button" class="edit-row tool" data-cmd="removeTable"><span class="ico">✕</span><span class="label">Tabel weg</span></button>
+        </div>
+      </section>
+      <form class="tool-ask" id="toolAsk" hidden>
+        <input type="text" id="toolAskUrl" placeholder="https://…" aria-label="Adres">
+        <input type="text" id="toolAskText" placeholder="Tekst" aria-label="Tekst">
+        <button type="submit" class="btn-primary">Invoegen</button>
+      </form>
+      <div class="tool-status" id="toolStatus"></div>
+    </nav>
     <main class="stage">
       <iframe
         id="frame"

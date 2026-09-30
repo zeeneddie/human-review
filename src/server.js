@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { atomicWrite, Store, resolveAsset } from "./state.js";
 import { injectSdk, stripSdk } from "./html-transform.js";
 import { isMarkdown, renderMarkdownPage } from "./markdown.js";
+import { aligned, forEditor, sourceEdits, splice } from "./md-splice.js";
 import { canonicalTarget, ensureStateDir, localUrl, SERVER_PROTOCOL, serverPath, stateDir, targetKey } from "./paths.js";
 import { invocation, shellQuote } from "./setup.js";
 
@@ -346,6 +347,25 @@ export function createServer() {
   }
 
   /**
+   * Write a Markdown source from the editor. Refuses when the file changed on
+   * disk since `expectHash` (the agent wrote it meanwhile): that write must
+   * not be overwritten blind. Our own write never bounces back as a reload.
+   */
+  function writeMarkdown(key, text, expectHash) {
+    const page = store.page(key);
+    if (!page || page.kind === "url" || !isMarkdown(page.file)) throw new Error("not a Markdown file");
+    const current = fs.readFileSync(page.file, "utf8");
+    if (expectHash && hash(current) !== expectHash) {
+      const err = new Error("the file changed on disk meanwhile; reload the editor");
+      err.status = 409;
+      throw err;
+    }
+    atomicWrite(page.file, text);
+    lastWritten.set(key, hash(text));
+    return hash(text);
+  }
+
+  /**
    * Register a file for review. The file as it sits on disk becomes the
    * agent's version — the revert target — unless the page still carries
    * unsent edits and the file is exactly what the browser last autosaved:
@@ -401,7 +421,7 @@ export function createServer() {
         markdown,
         // Direct edits to a plain HTML file are autosaved into it as they
         // happen; everywhere else they exist only in this batch.
-        edits_saved: page.kind !== "url" && !markdown && !page.dynamic,
+        edits_saved: page.kind !== "url" && (markdown ? edits.length > 0 && edits.every((e) => e.saved) : !page.dynamic),
         comments: comments.map((c) => ({
           id: c.id,
           kind: c.kind,
@@ -412,6 +432,8 @@ export function createServer() {
         edits: edits.map((e) => ({
           label: e.label,
           kind: e.kind,
+          // Written into the file by the editor already: do not apply again.
+          ...(e.saved ? { saved: true } : {}),
           before: e.before,
           after: e.after,
           ...(e.before_html !== undefined && e.before_html !== e.before ? { before_html: e.before_html } : {}),
@@ -524,6 +546,7 @@ export function createServer() {
     const hasSaved = pages.some((p) => p.edits_saved && p.edits.length);
     const hasTruncated = pages.some((p) => p.edits.some((e) => e.truncated));
     const hasReplies = pages.some((p) => p.replies.length);
+    const hasFileEdits = pages.some((p) => p.markdown && p.edits.some((e) => e.saved));
     const batch = {
       status: "feedback",
       pages: pages.map(({ kind, file, url, markdown, edits_saved, comments, edits, replies }) => ({
@@ -559,6 +582,10 @@ export function createServer() {
             "and apply every exact edit or deletion there; never try to write the rendered HTML response back to the app. " +
             "When an edit includes `staged_assets`, copy each local image into the app's appropriate asset folder, replace its " +
             "temporary preview URL in `after_html`, and preserve the image at the user's insertion point. "
+          : "") +
+        (hasFileEdits
+          ? "Markdown edits marked `saved: true` were made in the editor and are already in the file, block for block: " +
+            "do not apply them again; rebuild from the source and run its gate. "
           : "") +
         (hasReplies
           ? "`replies` answer reviewer notes posted with `human-review notes`: `akkoord` = apply `final_suggestion` at the " +
@@ -782,6 +809,9 @@ export function createServer() {
     "/frame-policy.js": ["frame-policy.js", CORS],
     "/click-target.js": ["click-target.js", CORS],
     "/serialize.js": ["serialize.js", CORS],
+    "/editor-client.js": ["editor-client.js", CORS],
+    "/vendor/editor.js": ["vendor/editor.js", CORS],
+    "/vendor/editor.css": ["vendor/editor.css", CORS],
   };
 
   /**
@@ -937,6 +967,19 @@ export function createServer() {
         if (!page) {
           res.writeHead(404, { "content-type": "text/plain" });
           return res.end("Unknown page");
+        }
+        // --- the editor for a Markdown page (Bewerken): grafisch, or the file itself (Bron)
+        if (asset === "__edit__") {
+          if (page.kind === "url" || !isMarkdown(page.file)) {
+            res.writeHead(404, { "content-type": "text/plain" });
+            return res.end("Only Markdown files open in the editor");
+          }
+          const source = fs.readFileSync(page.file, "utf8");
+          const mode = url.searchParams.get("mode") === "bron" ? "bron" : "grafisch";
+          const data = { key, mode, hash: hash(source), text: mode === "bron" ? source : forEditor(source) };
+          const shell = fs.readFileSync(path.join(here, "editor.html"), "utf8");
+          res.writeHead(200, { "content-type": MIME[".html"], "cache-control": "no-store" });
+          return res.end(shell.replace("__DATA__", JSON.stringify(data).replace(/</g, "\\u003c")));
         }
         if (!asset || asset === "index.html") {
           let html = "";
@@ -1264,6 +1307,43 @@ export function createServer() {
           store.clearEdits(key);
           for (const session of sessionsForKey(key)) emit(session, "reload", { key });
           return json(res, 200, { page: pageState(key) });
+        }
+
+        // --- the editor: does its baseline line up with the file? (the gate)
+        if (action === "mdcheck" && req.method === "POST") {
+          const body = await readBody(req);
+          const page = store.page(key);
+          if (page.kind === "url" || !isMarkdown(page.file)) return json(res, 400, { error: "not a Markdown file" });
+          const source = fs.readFileSync(page.file, "utf8");
+          const check = aligned(source, String(body.b0 || ""));
+          return json(res, 200, { ...check, hash: hash(source) });
+        }
+
+        // --- the editor saves: only the blocks you changed go into the file
+        if ((action === "mdsave" || action === "mdsource") && req.method === "POST") {
+          const body = await readBody(req);
+          const page = store.page(key);
+          if (page.kind === "url" || !isMarkdown(page.file)) return json(res, 400, { error: "not a Markdown file" });
+          const source = fs.readFileSync(page.file, "utf8");
+          if (body.hash && hash(source) !== body.hash) {
+            return json(res, 409, { error: "Het bestand is intussen veranderd (door de agent?). De editor laadt opnieuw." });
+          }
+          let next;
+          let edits;
+          try {
+            if (action === "mdsave") ({ source: next, edits } = splice(source, String(body.b0 || ""), String(body.b1 || "")));
+            else {
+              next = String(body.text ?? "");
+              edits = sourceEdits(source, next);
+            }
+          } catch (err) {
+            return json(res, 409, { error: err.message });
+          }
+          if (next !== source) {
+            writeMarkdown(key, next, hash(source));
+            store.recordFileEdits(key, edits, coverageFor(key).sentAt);
+          }
+          return json(res, 200, { ok: true, hash: hash(next), changed: edits.length, page: pageState(key) });
         }
 
         // --- your answer to a reviewer note: akkoord / aangepast / niet / antwoord, or null to undo
