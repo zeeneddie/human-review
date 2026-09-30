@@ -80,6 +80,23 @@ I use Human Review to edit AI-generated plans, update landing pages, review loca
 
 Everything runs on your computer. Human Review doesn’t require an account, cloud service, database, or API key.
 
+## MarQed fork (zeeneddie/human-review)
+
+This fork adds review of multi-file reports and a two-way conversation with the
+agent. Labels in the review UI are Dutch. Fork point: tag `v-human-review-fork-point-2026-09-30`
+(upstream `f9a5581`, v0.8.2).
+
+| PR | What | Tag |
+|---|---|---|
+| #1 | **Report menu.** `human-review RAPPORT.md DECK.md SCORECARD.md` opens one review with a menu of pages (counts and status: open · verstuurd · verwerkt). **Verstuur pagina** sends the page on screen; **Verstuur hele rapport / Verstuur rest** sends every page not yet sent. | `mq-rapportmenu-2026-09-30` |
+| #2 | **Reviewer notes.** `human-review notes <target> [--author Fable] < notes.json` posts cards into the rail, each anchored on its quote. The author is free (Claude, Fable, ChatGPT, Consistentie, …), and a note may carry a suggestion. Per card: ☑ Akkoord, edit the suggestion (Aangepast), Niet doen, or an Antwoord. Answers reach the agent as `replies`. A note without a suggestion is a question: answer or decline. | `mq-reviewer-opmerkingen-2026-09-30` |
+| #3 | **Many cards.** Only the active card is open, the rest is one line each. Reviewer marks are blue, yours stay yellow. Cards follow the text order. **Alles akkoord (n)** accepts every open suggestion at once. Clicking a mark opens its card. | `mq-veel-kaarten-2026-09-30` |
+| #4 *(draft)* | **Markdown editing.** A left bar with Review · Bewerken (WYSIWYG, Toast UI 3.2.2) · Bron (the file itself). Only the blocks you change are written back (`src/md-splice.js`); the YAML header and link/footnote definitions stay out of the WYSIWYG editor. | — |
+
+Server protocol: bump `SERVER_PROTOCOL` (`src/paths.js`) whenever the server API
+changes, and stop the old server. A running old server holds the slot, and a new
+CLI would wait for it and then give up.
+
 ## Want more great AI skills?
 
 Check out [Behind the Craft](https://behindthecraft.com), my personal AI system with over a dozen other quality skills and courses.
