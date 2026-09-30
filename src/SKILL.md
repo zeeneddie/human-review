@@ -209,6 +209,19 @@ disappear and unanswered ones stay in the rail.
 After posting notes, start the background poll right away. Without a poll,
 the user's Send lands on "Verstuurd — maar er luistert nog geen agent".
 
+## Markdown pages: Review, Bewerken and Bron
+
+A Markdown page has a left bar with three views. **Review** is the rendered
+page with marks, comments and notes. **Bewerken** is a WYSIWYG editor with
+headings, lists, tables, links and images. **Bron** is the file itself, for
+footnotes, link definitions, the YAML header, HTML and pandoc blocks.
+
+Edits made in Bewerken or Bron are written into the file straight away, block
+by block; the rest of the file stays byte-identical. They reach you as edits
+with `saved: true` and the page's `edits_saved: true`. Do not apply them
+again. Rebuild from the source and run its gate. If the editor cannot line up
+its blocks with the file, it refuses to edit and the user works in Bron.
+
 ## Better edit labels (optional)
 
 Name the sections you author and the user's edit list uses your names instead of

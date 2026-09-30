@@ -23,10 +23,29 @@
  */
 import { marked } from "marked";
 
-const lex = (md) => marked.lexer(String(md || ""));
+/** A YAML header at the very top of the file (`---` … `---`), as pandoc reads it. */
+const FRONT_MATTER = /^---[ \t]*\n[\s\S]*?\n(?:---|\.\.\.)[ \t]*(?:\n|$)/;
 
-/** Blocks the editor never sees: link and footnote definitions (`[x]: …`, `[^1]: …`). */
-const isProtected = (token) => token.type === "def";
+/**
+ * The file's tokens, each marked `protected` when the editor must never see
+ * it: link and footnote definitions (`[x]: …`, `[^1]: …`), which it escapes
+ * and merges, and the YAML header, which Markdown reads as a rule plus a
+ * heading — a click there turned `toc-title:` into `# --- toc-title …`.
+ * Protected blocks are edited in Bron only.
+ */
+function lex(md) {
+  const text = String(md || "");
+  const header = text.match(FRONT_MATTER);
+  const headerEnd = header ? header[0].length : 0;
+  let at = 0;
+  return marked.lexer(text).map((t) => {
+    const start = at;
+    at += t.raw.length;
+    return Object.assign(t, { protected: t.type === "def" || start < headerEnd });
+  });
+}
+
+const isProtected = (token) => token.protected;
 const isContent = (token) => token.type !== "space" && !isProtected(token);
 
 const trimEnd = (raw) => raw.replace(/\n+$/, "");
@@ -130,18 +149,28 @@ function diffBlocks(a, b) {
       i += 1;
     }
   }
-  // A delete directly followed by an insert at the same spot is an edit.
+  // Within each run of changes between two unchanged blocks, the n-th removed
+  // block and the n-th added block are one edit; what is left over was really
+  // removed or added. Added blocks go in after the run.
   const out = [];
-  for (let k = 0; k < ops.length; k += 1) {
-    const cur = ops[k];
-    const next = ops[k + 1];
-    if (cur.op === "delete" && next && next.op === "insert" && next.i === cur.i + 1) {
-      out.push({ op: "edit", i: cur.i, j: next.j });
+  let k = 0;
+  while (k < ops.length) {
+    if (ops[k].op === "same") {
+      out.push(ops[k]);
       k += 1;
-    } else if (cur.op === "insert" && next && next.op === "delete" && next.i === cur.i) {
-      out.push({ op: "edit", i: next.i, j: cur.j });
+      continue;
+    }
+    const dels = [];
+    const ins = [];
+    while (k < ops.length && ops[k].op !== "same") {
+      (ops[k].op === "delete" ? dels : ins).push(ops[k]);
       k += 1;
-    } else out.push(cur);
+    }
+    const runEnd = k < ops.length ? ops[k].i : n;
+    const pairs = Math.min(dels.length, ins.length);
+    for (let p = 0; p < pairs; p += 1) out.push({ op: "edit", i: dels[p].i, j: ins[p].j });
+    for (const d of dels.slice(pairs)) out.push({ op: "delete", i: d.i });
+    for (const a of ins.slice(pairs)) out.push({ op: "insert", i: runEnd, j: a.j });
   }
   return out;
 }
@@ -229,4 +258,21 @@ export function stableBaseline(getMarkdown, setMarkdown) {
     prev = cur;
   }
   return null;
+}
+
+/**
+ * Edit rows for a whole-file change (the Bron view, where you type the file
+ * itself). Every block counts here, definitions included.
+ */
+export function sourceEdits(before, after) {
+  const all = (md) => lex(md).filter((t) => t.type !== "space").map((t) => ({ type: t.type, raw: trimEnd(t.raw) }));
+  const a = all(before);
+  const b = all(after);
+  const edits = [];
+  for (const d of diffBlocks(a, b)) {
+    if (d.op === "edit") edits.push({ kind: "edited", label: label(a[d.i].raw), before: a[d.i].raw, after: b[d.j].raw });
+    else if (d.op === "delete") edits.push({ kind: "deleted", label: label(a[d.i].raw), before: a[d.i].raw, after: "" });
+    else if (d.op === "insert") edits.push({ kind: "inserted", label: label(b[d.j].raw), before: "", after: b[d.j].raw });
+  }
+  return edits;
 }

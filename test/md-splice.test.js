@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { aligned, contentBlocks, forEditor, splice, stableBaseline, tidyBlock, unwrap } from "../src/md-splice.js";
+import { aligned, contentBlocks, forEditor, sourceEdits, splice, stableBaseline, tidyBlock, unwrap } from "../src/md-splice.js";
 
 // The real editor, in jsdom (a dev dependency that needs Node 22+).
 let Editor = null;
@@ -27,7 +27,7 @@ const skip = Editor ? false : "jsdom or the editor unavailable on this Node vers
 
 /** Load a source the way the review does, then let `change` play the user. */
 function session(source) {
-  const ed = new Editor({ el: document.getElementById("e"), initialEditType: "wysiwyg", initialValue: forEditor(source), frontMatter: true, usageStatistics: false });
+  const ed = new Editor({ el: document.getElementById("e"), initialEditType: "wysiwyg", initialValue: forEditor(source), frontMatter: false, usageStatistics: false });
   const b0 = stableBaseline(() => ed.getMarkdown(), (md) => ed.setMarkdown(md));
   return {
     b0,
@@ -171,4 +171,19 @@ test("a baseline that never settles is refused", () => {
   let n = 0;
   assert.equal(stableBaseline(() => `ronde ${(n += 1)}`, () => {}), null);
   assert.equal(stableBaseline(() => "vast", () => {}), "vast");
+});
+
+test("the YAML header never reaches the editor and survives every save byte for byte", { skip }, () => {
+  assert.doesNotMatch(forEditor(SOURCE), /toc-title/, "the editor does not see it");
+  const s = session(SOURCE);
+  assert.doesNotMatch(s.b0, /toc-title/);
+  // Change the first block the editor does have: the title.
+  const b1 = s.edit((b) => b.replace("# Rapport", "### Rapport (kort)"));
+  s.done();
+  const { source, edits } = splice(SOURCE, s.b0, b1);
+  assert.equal(edits.length, 1);
+  assert.ok(source.startsWith("---\ntoc-title: Inhoudsopgave\n---\n\n### Rapport (kort)\n"), source.slice(0, 80));
+  // In Bron the header is an ordinary block you can change.
+  const bron = sourceEdits(SOURCE, SOURCE.replace("Inhoudsopgave", "Inhoud"));
+  assert.equal(bron.length, 1);
 });

@@ -541,3 +541,25 @@ body.collapsed .handle { right: 0; }
 .comment.note.compact .body:hover { background: none; box-shadow: none; }
 .comment.note.compact .note-actions { margin-top: 6px; }
 .notes-bar { display: flex; justify-content: flex-end; margin: 0 0 8px; }
+
+/* Linkerbalk: Weergave (Review / Bewerken / Bron) en de gereedschappen van de editor,
+   in dezelfde koppen, lijsten en maten als de rechterkolom. */
+.tools { flex: none; width: 176px; display: flex; flex-direction: column; gap: 14px; padding: 14px 12px; overflow-y: auto;
+  border-right: 1px solid var(--hair-2); background: var(--rail, var(--canvas)); }
+.tools[hidden] { display: none; }
+.tools .edit-list { display: flex; flex-direction: column; }
+.tool.edit-row { width: 100%; border-left: 0; border-right: 0; border-bottom: 0; background: transparent; color: inherit;
+  text-align: left; cursor: pointer; font: inherit; }
+.tool.edit-row:first-child { border-top: 0; }
+.tool.edit-row:hover:not(:disabled) { background: var(--soft); }
+.tool.edit-row:disabled { opacity: .4; cursor: default; }
+.tool .ico { flex: none; width: 22px; color: var(--faint-2); font-size: 12px; text-align: center; }
+.tool .label { font-size: 12.5px; }
+.tool.mode.on { background: var(--soft); box-shadow: inset 2px 0 0 var(--agent); }
+.tool.mode.on .ico, .tool.mode.on .label { color: var(--agent); font-weight: 600; }
+.tools.review .edit-only, .tools.bron .edit-only { display: none; }
+.tool-ask { display: flex; flex-direction: column; gap: 6px; position: fixed; left: 184px; z-index: 50; width: 240px; padding: 10px;
+  border: 1px solid var(--card-border); border-radius: 8px; background: var(--card); box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.tool-ask[hidden] { display: none; }
+.tool-ask input { font-size: 12.5px; }
+.tool-status { margin-top: auto; color: var(--faint-2); font-size: 11px; text-align: center; }

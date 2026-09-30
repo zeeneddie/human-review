@@ -43,6 +43,7 @@ const state = {
   leftover: null,
   noteDrafts: new Map(),
   markOrder: [],
+  mode: "review",
 };
 
 /**
@@ -102,6 +103,141 @@ function artifactUrl(key, bust = false) {
   return `${ARTIFACT_ORIGIN}/artifact/${state.artifactToken}/${key}/index.html${query}`;
 }
 
+/** The editor for a Markdown page: grafisch (Toast UI) or bron (the file itself). */
+function editorUrl(key, mode) {
+  return `${ARTIFACT_ORIGIN}/artifact/${state.artifactToken}/${key}/__edit__?mode=${mode}&t=${Date.now()}`;
+}
+
+// ------------------------------------------------------------ edit modes
+
+const tools = document.getElementById("tools");
+
+/** Review, Bewerken (grafisch) or Bron — Markdown files only. */
+async function setMode(mode) {
+  if (!state.page || mode === state.mode) return;
+  if (state.mode !== "review") await editorFlush();
+  state.mode = mode;
+  $("toolAsk").hidden = true;
+  $("toolStatus").textContent = mode === "review" ? "" : "laden…";
+  if (mode === "review") {
+    state.reloading = true;
+    showInFrame(artifactUrl(state.key, true));
+    // Saves while editing changed the page: fresh rows, fresh marks.
+    replacePage(state, await api(pageUrl(state.key, state.sessionId)));
+  } else showInFrame(editorUrl(state.key, mode));
+  renderTools();
+  render();
+}
+
+function renderTools() {
+  const editable = !!state.page && state.page.kind === "file" && state.page.markdown;
+  tools.hidden = !editable;
+  tools.classList.toggle("review", state.mode === "review");
+  tools.classList.toggle("bron", state.mode === "bron");
+  for (const b of tools.querySelectorAll(".tool.mode")) b.classList.toggle("on", b.dataset.mode === state.mode);
+}
+
+/** Wait until the editor has saved what was typed (or give up after 4 s). */
+let editorFlushWaiters = [];
+function editorFlush() {
+  if (state.mode === "review") return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, 4000);
+    function done() {
+      clearTimeout(timer);
+      resolve();
+    }
+    editorFlushWaiters.push(done);
+    toFrame({ type: "ed:flush" });
+  });
+}
+
+/** The editor's messages: the gate, saves, and what it could not do. */
+async function onEditorMessage(msg) {
+  const setStatus = (text) => {
+    $("toolStatus").textContent = text;
+  };
+  switch (msg.type) {
+    case "ed:check": {
+      try {
+        const r = await api(`/api/page/${state.key}/mdcheck`, { method: "POST", body: JSON.stringify({ b0: msg.b0 }) });
+        toFrame({ type: "ed:checked", ok: r.ok, reason: r.reason, hash: r.hash });
+      } catch (err) {
+        toFrame({ type: "ed:checked", ok: false, reason: err.message });
+      }
+      break;
+    }
+    case "ed:ready":
+      for (const b of tools.querySelectorAll(".edit-only .tool")) b.disabled = false;
+      setStatus(msg.mode === "bron" ? "bron" : "klaar");
+      break;
+    case "ed:locked":
+      setStatus("alleen lezen");
+      for (const b of tools.querySelectorAll(".edit-only .tool")) b.disabled = true;
+      break;
+    case "ed:dirty":
+      setStatus("wijzigt…");
+      break;
+    case "ed:save":
+    case "ed:source": {
+      const action = msg.type === "ed:save" ? "mdsave" : "mdsource";
+      const body = msg.type === "ed:save" ? { b0: msg.b0, b1: msg.b1, hash: msg.hash } : { text: msg.text, hash: msg.hash };
+      try {
+        const r = await api(`/api/page/${state.key}/${action}`, { method: "POST", body: JSON.stringify(body) });
+        state.page = r.page;
+        state.sent = false;
+        toFrame({ type: "ed:saved", hash: r.hash, ...(msg.type === "ed:save" ? { b1: msg.b1 } : {}) });
+        setStatus(`opgeslagen ${clock()}`);
+        render();
+      } catch (err) {
+        toFrame({ type: "ed:failed", error: err.message, reload: err.status === 409 });
+        setStatus("niet opgeslagen");
+      }
+      break;
+    }
+    case "ed:flushed": {
+      const waiters = editorFlushWaiters;
+      editorFlushWaiters = [];
+      for (const done of waiters) done();
+      break;
+    }
+    case "ed:execFailed":
+      toast(`Dat kan hier niet (${msg.cmd})`);
+      break;
+    default:
+  }
+}
+
+for (const b of tools.querySelectorAll(".tool.mode")) b.addEventListener("click", () => setMode(b.dataset.mode));
+for (const b of tools.querySelectorAll(".tool[data-cmd]")) {
+  b.addEventListener("click", () => {
+    const payload = b.dataset.payload ? JSON.parse(b.dataset.payload) : undefined;
+    toFrame({ type: "ed:exec", cmd: b.dataset.cmd, payload });
+  });
+}
+let askFor = null;
+for (const b of tools.querySelectorAll(".tool[data-ask]")) {
+  b.addEventListener("click", () => {
+    askFor = b.dataset.ask;
+    const form = $("toolAsk");
+    form.style.top = `${b.getBoundingClientRect().top}px`;
+    $("toolAskUrl").value = "";
+    $("toolAskText").value = "";
+    $("toolAskText").placeholder = askFor === "image" ? "Omschrijving" : "Tekst";
+    form.hidden = false;
+    $("toolAskUrl").focus();
+  });
+}
+$("toolAsk").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const url = $("toolAskUrl").value.trim();
+  const text = $("toolAskText").value.trim();
+  $("toolAsk").hidden = true;
+  if (!url) return;
+  if (askFor === "image") toFrame({ type: "ed:exec", cmd: "addImage", payload: { imageUrl: url, altText: text || url } });
+  else toFrame({ type: "ed:exec", cmd: "addLink", payload: { linkUrl: url, linkText: text || url } });
+});
+
 /**
  * The server forgot this session — it restarted, or the tab was away longer
  * than the session lives. Open a fresh session on the same target so the
@@ -157,6 +293,7 @@ async function loadPage(key, { reload = true } = {}) {
   state.orphans = new Set();
   state.noteDrafts = new Map();
   state.markOrder = [];
+  state.mode = "review";
   state.compose = null;
   state.active = null;
   state.sent = false;
@@ -482,6 +619,7 @@ function render() {
 }
 
 function renderRail(page) {
+  renderTools();
   document.title = page.filename || 'human-review';
 
   const comments = page.comments || [];
@@ -1024,6 +1162,11 @@ window.addEventListener("message", async (event) => {
   if (!state.framePolicy || event.origin !== state.framePolicy.incomingOrigin) return;
   const msg = event.data || {};
 
+  if (typeof msg.type === "string" && msg.type.startsWith("ed:")) {
+    if (state.mode !== "review") await onEditorMessage(msg);
+    return;
+  }
+
   switch (msg.type) {
     case "eh:ready": {
       toFrame({ type: "eh:anchors", comments: anchorables() });
@@ -1205,7 +1348,8 @@ async function gotoPage(key) {
 /** `page` sends the page on screen; `all` every page with unsent feedback. */
 async function sendFeedback(scope) {
   try {
-    await flushFrame();
+    if (state.mode === "review") await flushFrame();
+    else await editorFlush();
     await flushNotes();
     await api(`/api/page/${state.key}/send`, {
       method: "POST",
@@ -1392,6 +1536,16 @@ function connect() {
     showEnded(reason === "window_closed" ? "Dit tabblad was te lang weg, dus de review is beëindigd. Niet-verstuurde feedback blijft bewaard; open de pagina opnieuw om hem te herstellen of weg te gooien." : undefined);
   });
   source.addEventListener("reload", () => {
+    // Changed on disk by someone else (the agent): the editor starts again from the file.
+    if (state.mode !== "review") {
+      showInFrame(editorUrl(state.key, state.mode));
+      toast("Het bestand is veranderd; de editor is opnieuw geladen");
+      api(pageUrl(state.key, state.sessionId)).then((page) => {
+        replacePage(state, page);
+        render();
+      });
+      return;
+    }
     const hadEdits = state.page ? state.page.edits.length : 0;
     state.reloading = true;
     state.dynamic = false;
