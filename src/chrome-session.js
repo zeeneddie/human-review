@@ -5,4 +5,5 @@ export function pageUrl(key, sessionId) {
 export function replacePage(state, page) {
   state.page = page;
   state.others = page.others || [];
+  state.report = page.report || null;
 }

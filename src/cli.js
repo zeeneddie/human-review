@@ -13,6 +13,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(here, "..", "package.json"), "u
 const HELP = `human-review ${pkg.version}
 
   human-review <file-or-localhost-url> Open a file or localhost page for review
+  human-review <file> <file>...       Open several files as one report (one poll target: the first)
   human-review poll <target>          Block until the user hits Send, then print the batch as JSON
       --ack                        Acknowledge the last batch, then wait for the next
       --timeout <secs>             Give up with {"status":"timeout"} after this long (default: wait for Send)
@@ -102,14 +103,27 @@ function openBrowser(url) {
 
 // ------------------------------------------------------------------ commands
 
-async function openCommand(input) {
+async function openCommand(input, extra = []) {
   const target = canonicalTarget(input);
-  if (target.kind === "file" && !fs.existsSync(target.value)) {
-    console.error(`File not found: ${target.value}`);
+  // Extra files make one report: every file a page in the report menu, all
+  // feedback polled on the first one.
+  const also = extra.map((file) => canonicalTarget(file));
+  for (const t of [target, ...also]) {
+    if (t.kind === "file" && !fs.existsSync(t.value)) {
+      console.error(`File not found: ${t.value}`);
+      process.exit(1);
+    }
+  }
+  if (also.some((t) => t.kind !== "file") || (also.length && target.kind !== "file")) {
+    console.error("A report of several pages takes local files only.");
     process.exit(1);
   }
   const server = await ensureServer();
-  const res = await request(server, { method: "POST", path: "/api/session", headers: { "content-type": "application/json" } }, { target: target.value });
+  const res = await request(
+    server,
+    { method: "POST", path: "/api/session", headers: { "content-type": "application/json" } },
+    { target: target.value, ...(also.length ? { also: also.map((t) => t.value) } : {}) }
+  );
   const body = JSON.parse(res.raw);
   if (res.status !== 200) {
     console.error(body.error || "Could not open that file.");
@@ -117,7 +131,7 @@ async function openCommand(input) {
   }
   const url = `http://127.0.0.1:${server.port}${body.path}`;
   openBrowser(url);
-  console.log(`Reviewing ${target.kind === "url" ? target.value : path.basename(target.value)}`);
+  console.log(`Reviewing ${target.kind === "url" ? target.value : [target, ...also].map((t) => path.basename(t.value)).join(", ")}`);
   console.log(url);
   console.log(`\nWaiting for feedback? Run this in the background; it exits when the user hits Send:\n  human-review poll ${shellQuote(target.value)}`);
 }
@@ -345,7 +359,8 @@ try {
     const isGlobal = argv.includes("--global") || argv.includes("-g");
     installSkills(process.cwd(), { global: isGlobal }).forEach((line) => console.log(line));
   } else {
-    await openCommand(argv[0]);
+    const files = argv.filter((a) => !a.startsWith("-"));
+    await openCommand(files[0], files.slice(1));
   }
 } catch (err) {
   console.error(err.message || String(err));

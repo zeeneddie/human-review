@@ -28,6 +28,17 @@ keeping its formatting syntax.
    npx -y human-review http://localhost:3000/wiki
    ```
 
+   A report of several files (say `RAPPORT.md`, `DECK.md`, `SCORECARD.md`)
+   opens as one review. Each file is a page in the report menu, and the user
+   sends one page at a time (Verstuur pagina) or every unsent page at once
+   (Verstuur hele rapport / Verstuur rest). Poll the **first** file; each
+   batch lists only the pages that were sent:
+
+   ```sh
+   npx -y human-review RAPPORT.md DECK.md SCORECARD.md
+   npx -y human-review poll RAPPORT.md
+   ```
+
 3. Wait for feedback. This command blocks until the user hits Send in the
    browser, then prints their batch and exits:
 

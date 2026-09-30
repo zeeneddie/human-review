@@ -503,3 +503,17 @@ body.collapsed .handle { right: 0; }
 .badge.sent { background: var(--soft); color: var(--green); }
 .edit-row.sent { opacity: .55; }
 .edit-row.sent .pip { background: var(--green); }
+
+/* Rapportmenu: one row per page of the report, with its unsent counts and status. */
+.report { margin-bottom: 18px; }
+.report-row { width: 100%; border: 0; background: transparent; text-align: left; cursor: pointer; color: inherit; }
+.report-row:hover { background: var(--soft); }
+.report-row.active { background: var(--soft); }
+.report-row.active .label { font-weight: 600; }
+.report-row .pip { background: var(--hair); }
+.report-row.open .pip { background: var(--amber); }
+.report-row.verstuurd .pip { background: var(--faint-2); }
+.report-row.verwerkt .pip { background: var(--green); }
+
+.send-all { margin-top: 8px; background: transparent; color: var(--strong-txt); border-color: var(--strong-border); }
+.send-all:hover:not(:disabled) { background: var(--soft); }
