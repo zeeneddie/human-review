@@ -47,6 +47,7 @@
     "jsdom": "^29.1.1"
   },
   "dependencies": {
+    "@toast-ui/editor": "3.2.2",
     "marked": "^18.0.7"
   }
 }
