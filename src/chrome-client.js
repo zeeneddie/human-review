@@ -106,12 +106,20 @@ function artifactUrl(key, bust = false) {
  * page keeps working instead of turning into a dead tab that looks alive.
  */
 async function rebootstrap() {
-  const target = state.page ? state.page.url || state.page.file : "";
-  if (!target) return false;
+  const current = state.page ? state.page.url || state.page.file : "";
+  if (!current) return false;
+  // A report reopens whole, on its first file — the one the agent polls —
+  // so its menu and its poll target survive the restart.
+  const files = state.page.kind === "file" && state.report && state.report.pages.length > 1 ? state.report.pages.map((p) => p.file).filter((f) => f && !/^https?:/i.test(f)) : [];
+  const target = files.length ? files[0] : current;
+  const also = files.slice(1);
   try {
-    const fresh = await api("/api/session", { method: "POST", body: JSON.stringify({ target }) });
+    const fresh = await api("/api/session", { method: "POST", body: JSON.stringify({ target, ...(also.length ? { also } : {}) }) });
     state.sessionId = fresh.sessionId;
     state.artifactToken = fresh.artifactToken || state.artifactToken;
+    if (fresh.key !== state.key) {
+      await api(`/api/session/${state.sessionId}/goto`, { method: "POST", body: JSON.stringify({ key: state.key }) });
+    }
     history.replaceState({ key: state.key }, "", `${fresh.path}?key=${encodeURIComponent(state.key)}`);
     return true;
   } catch {
@@ -388,56 +396,100 @@ function render() {
       count.className = "kind";
       count.textContent = String(other.count);
       row.append(label, count);
-      row.addEventListener("click", async () => {
-        await flushFrame();
-        await api(`/api/session/${state.sessionId}/goto`, {
-          method: "POST",
-          body: JSON.stringify({ key: other.key }),
-        });
-        state.scroll = { x: 0, y: 0 };
-        pushHistory(other.key);
-        await loadPage(other.key);
-      });
+      row.addEventListener("click", () => gotoPage(other.key));
       list.append(row);
     }
   }
 
   // --- send: only what the agent does not have yet counts. Items from a
   // batch that is delivered or queued stay listed until the ack, marked sent.
-  const otherTotal = others.reduce((sum, o) => sum + o.count, 0);
   const unsent = page.unsent || { comments: comments.length, edits: edits.length };
-  const total = unsent.comments + unsent.edits + otherTotal;
+  const pageTotal = unsent.comments + unsent.edits;
+  const otherTotal = others.reduce((sum, o) => sum + o.count, 0);
+  const total = pageTotal + otherTotal;
+  const pagesWithFeedback = (pageTotal ? 1 : 0) + others.length;
+  const reportPages = state.report ? state.report.pages : [];
+  const multi = reportPages.length > 1 || others.length > 0;
+
+  // --- rapportmenu: every page of the report, its counts and where it stands.
+  // The server's numbers can lag for the page on screen (comment and edit
+  // responses carry only that page), so its row reads from the page itself.
+  const reportBox = $("reportBox");
+  reportBox.hidden = reportPages.length < 2;
+  othersBox.hidden = othersBox.hidden || !reportBox.hidden;
+  if (!reportBox.hidden) {
+    $("reportCount").textContent = String(reportPages.length);
+    const list = $("reportList");
+    list.textContent = "";
+    for (const entry of reportPages) {
+      const current = entry.key === state.key;
+      const counts = current ? unsent : entry;
+      const status = current && pageTotal ? "open" : current && entry.status === "open" ? "leeg" : entry.status;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = `edit-row report-row ${status}${current ? " active" : ""}`;
+      const pip = document.createElement("span");
+      pip.className = "pip";
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = entry.filename;
+      const kind = document.createElement("span");
+      kind.className = "kind";
+      const parts = [];
+      if (counts.edits) parts.push(`${counts.edits} ${counts.edits === 1 ? "wijziging" : "wijzigingen"}`);
+      if (counts.comments) parts.push(`${counts.comments} ${counts.comments === 1 ? "opmerking" : "opmerkingen"}`);
+      kind.textContent = parts.length ? parts.join(" · ") : { verstuurd: "verstuurd", verwerkt: "verwerkt" }[status] || "—";
+      row.append(pip, label, kind);
+      if (!current) row.addEventListener("click", () => gotoPage(entry.key));
+      list.append(row);
+    }
+  }
+
   // An overall note is sendable on its own — the server already accepts
   // note-only batches; the button must not stay dead while one is typed.
   const hasNote = $("note").value.trim().length > 0;
-  const send = $("send");
   const delivered = state.agent === "working";
   const queued = state.agent === "queued";
   const stranded = state.agent === "stranded";
-  // While the agent works, anything new can still be sent: it queues behind
-  // the batch in flight and ships with the agent's next poll.
-  const nothingNew = total === 0 && !hasNote;
-  const busy = stranded || state.sent || (queued && nothingNew);
-  send.disabled = nothingNew || busy;
-  send.textContent = stranded
-    ? "Sent — agent is not listening"
-    : state.sent || (nothingNew && (delivered || queued))
-      ? queued
-        ? "Sent — queued for the agent"
-        : delivered
-          ? "Feedback delivered"
-          : "Sent — waiting for agent"
-      : total
-        ? `Send ${total} to agent`
-        : hasNote
-          ? "Send note to agent"
-          : "Nothing to send yet";
-  if (!send.disabled) {
+  const statusText = stranded
+    ? "Verstuurd — agent luistert niet"
+    : queued
+      ? "Verstuurd — staat in de wachtrij"
+      : delivered
+        ? "Bij de agent"
+        : "Verstuurd — wacht op agent";
+  const withKey = (button, hint) => {
+    if (button.disabled) return;
     const key = document.createElement("span");
     key.className = "key";
-    key.textContent = "⌘⏎";
-    send.append(" ", key);
-  }
+    key.textContent = hint;
+    button.append(" ", key);
+  };
+
+  // Verstuur pagina: this page only. Anything a batch the agent has not
+  // picked up yet carried rides along server-side, so nothing is lost.
+  const send = $("send");
+  send.disabled = pageTotal === 0 && !hasNote;
+  send.textContent = pageTotal
+    ? `Verstuur pagina (${pageTotal})`
+    : hasNote
+      ? "Verstuur notitie"
+      : state.sent || delivered || queued || stranded
+        ? statusText
+        : "Niets te versturen";
+  withKey(send, "⌘⏎");
+
+  // Verstuur hele rapport — or, once something went, the pages still unsent.
+  const sendAll = $("sendAll");
+  sendAll.hidden = !multi;
+  sendAll.disabled = total === 0 && !hasNote;
+  const sentAny = !!(state.report && state.report.sentAny) || state.sent;
+  sendAll.textContent = total
+    ? `${sentAny ? "Verstuur rest" : "Verstuur hele rapport"} (${total} · ${pagesWithFeedback} ${pagesWithFeedback === 1 ? "pagina" : "pagina's"})`
+    : sentAny
+      ? "Alles verstuurd"
+      : "Niets te versturen";
+  withKey(sendAll, "⌘⇧⏎");
 
   // After sending, say what happens next. If nothing is polling, the loop would
   // otherwise dead-end silently, so hand over the exact command to run.
@@ -851,19 +903,38 @@ $("composeText").addEventListener("keydown", (event) => {
   }
 });
 
-$("send").addEventListener("click", async () => {
+/** Show another page of this review window: the Other pages list and the report menu. */
+async function gotoPage(key) {
+  await flushFrame();
+  await api(`/api/session/${state.sessionId}/goto`, {
+    method: "POST",
+    body: JSON.stringify({ key }),
+  });
+  state.scroll = { x: 0, y: 0 };
+  pushHistory(key);
+  await loadPage(key);
+}
+
+/** `page` sends the page on screen; `all` every page with unsent feedback. */
+async function sendFeedback(scope) {
   try {
+    await flushFrame();
     await api(`/api/page/${state.key}/send`, {
       method: "POST",
-      body: JSON.stringify({ sessionId: state.sessionId, note: $("note").value.trim() }),
+      body: JSON.stringify({ sessionId: state.sessionId, note: $("note").value.trim(), scope }),
     });
     $("note").value = "";
     state.sent = true;
+    // Fresh counts for the report menu and the other pages.
+    replacePage(state, await api(pageUrl(state.key, state.sessionId)));
     render();
   } catch (err) {
     toast(err.message);
   }
-});
+}
+
+$("send").addEventListener("click", () => sendFeedback("page"));
+$("sendAll").addEventListener("click", () => sendFeedback("all"));
 
 $("revert").addEventListener("click", async () => {
   const count = state.page.edits.length;
@@ -1002,7 +1073,8 @@ document.addEventListener("keydown", (event) => {
   if (meta && event.key === "Enter") {
     if (isImeCommitEnter(event)) return;
     event.preventDefault();
-    if (!$("send").disabled) $("send").click();
+    const button = event.shiftKey && !$("sendAll").hidden ? $("sendAll") : $("send");
+    if (!button.disabled) button.click();
     return;
   }
   // ⌘S is reassurance only: flush pending keystrokes, never a state change.

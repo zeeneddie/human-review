@@ -25,6 +25,14 @@
           <button type="button" id="theme" class="icon-btn" title="Switch chrome to dark" aria-label="Switch chrome to dark">☾</button>
         </div>
 
+        <section id="reportBox" class="report" hidden>
+          <div class="rail-head tight">
+            <span class="section">Rapport</span>
+            <span class="dim" id="reportCount">0</span>
+          </div>
+          <div class="edit-list" id="reportList"></div>
+        </section>
+
         <div id="leftover" class="leftover" hidden>
           <p id="leftoverText"></p>
           <div class="leftover-actions">
@@ -73,7 +81,8 @@
 
       <div class="rail-foot">
         <textarea id="note" rows="2" placeholder="Overall note…"></textarea>
-        <button type="button" id="send" class="send" disabled>Nothing to send yet</button>
+        <button type="button" id="send" class="send" disabled>Niets te versturen</button>
+        <button type="button" id="sendAll" class="send send-all" hidden disabled>Verstuur hele rapport</button>
         <div class="agent-line" id="agentLine" hidden><span class="dot amber"></span><span id="agentText"></span></div>
         <div class="handoff" id="handoff" hidden>
           <p class="handoff-title">Sent — but no agent is listening yet.</p>

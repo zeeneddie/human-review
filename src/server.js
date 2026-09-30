@@ -370,10 +370,12 @@ export function createServer() {
    * Every page you left feedback on ships in one batch, grouped by target.
    * `already` is the cleanup of a batch the agent has but has not acked yet:
    * anything it covers is in the agent's hands already and must not ship twice.
+   * `only`, when given, limits the batch to those page keys (Verstuur pagina).
    */
-  function collectPages(session, already = []) {
+  function collectPages(session, already = [], only = null) {
     const out = [];
     for (const key of session.visited) {
+      if (only && !only.has(key)) continue;
       const page = store.page(key);
       if (!page) continue;
       const covered = already.filter((entry) => entry.key === key);
@@ -434,7 +436,38 @@ export function createServer() {
     return out;
   }
 
-  function sendBatch(sessionId, note) {
+  /**
+   * Each page of the review with its unsent counts and where it stands:
+   * `open` (feedback not sent yet), `verstuurd` (with the agent, not acked),
+   * `verwerkt` (the agent acked it) or `leeg`. The report pages a session was
+   * opened with come first, in their given order; pages reached by
+   * navigating follow.
+   */
+  function reportPages(session) {
+    const keys = [...new Set([...(session.pages || []), ...session.visited])];
+    const out = [];
+    for (const key of keys) {
+      const page = store.page(key);
+      if (!page) continue;
+      const coverage = coverageFor(key);
+      const comments = page.comments.filter((c) => !coverage.ids.has(c.id)).length;
+      const edits = page.edits.filter((e) => !isSentEdit(e, coverage)).length;
+      const inFlight = page.comments.some((c) => coverage.ids.has(c.id)) || page.edits.some((e) => isSentEdit(e, coverage));
+      const status = comments + edits ? "open" : inFlight ? "verstuurd" : session.processed.has(key) ? "verwerkt" : "leeg";
+      out.push({
+        key,
+        filename: page.kind === "url" ? new URL(page.url).pathname || page.url : path.basename(page.file),
+        file: page.kind === "url" ? page.url : page.file,
+        comments,
+        edits,
+        status,
+        active: key === session.activeKey,
+      });
+    }
+    return out;
+  }
+
+  function sendBatch(sessionId, note, { scope = "all", key = null } = {}) {
     const session = sessions.get(sessionId);
     if (!session) return { error: "unknown session" };
 
@@ -444,8 +477,17 @@ export function createServer() {
     const previous = batches.get(session.entryKey);
     const inFlight = previous && previous.delivered ? previous : null;
     const already = inFlight ? [...(inFlight.priorCleanup || []), ...inFlight.cleanup] : previous ? previous.priorCleanup || [] : [];
-    const pages = collectPages(session, already);
+    // One page only. A batch no agent has picked up yet is replaced by this
+    // one, so its pages ride along — otherwise sending page B would silently
+    // drop page A that was sent a moment ago.
+    let only = null;
+    if (scope === "page" && key) {
+      only = new Set([key]);
+      if (previous && !previous.delivered) for (const entry of previous.cleanup) only.add(entry.key);
+    }
+    const pages = collectPages(session, already, only);
     if (!pages.length && !note) return { error: inFlight ? "nothing new since the batch the agent is working on" : "nothing to send" };
+    session.sentAny = true;
 
     const hasMarkdown = pages.some((p) => p.markdown);
     const hasUrl = pages.some((p) => p.kind === "url");
@@ -521,7 +563,10 @@ export function createServer() {
       } catch {}
     }
     for (const { key, ids, sentAt } of cleanup) store.clearSent(key, ids, sentAt);
-    for (const session of sessionsForEntry(entryKey)) emit(session, "refresh", {});
+    for (const session of sessionsForEntry(entryKey)) {
+      for (const { key } of cleanup) session.processed.add(key);
+      emit(session, "refresh", {});
+    }
     // File targets reload through fs.watch. URL targets have no source file to
     // watch, so acknowledgement is the signal to fetch the rebuilt route.
     for (const { key } of cleanup) {
@@ -789,6 +834,19 @@ export function createServer() {
           page = openFile(target.value);
         }
         watchPage(page.key);
+        // The rest of a report (DECK.md, SCORECARD.md next to RAPPORT.md): one
+        // review, one poll target, every file a page in the report menu.
+        const reportKeys = [page.key];
+        const also = Array.isArray(body.also) ? body.also : [];
+        for (const extra of also) {
+          const other = canonicalTarget(String(extra || ""));
+          if (other.kind !== "file" || !fs.existsSync(other.value) || !/\.(x?html?|md|markdown)$/i.test(other.value)) {
+            return json(res, 400, { error: `Not a local html or markdown file: ${extra}` });
+          }
+          const extraPage = openFile(other.value);
+          watchPage(extraPage.key);
+          if (!reportKeys.includes(extraPage.key)) reportKeys.push(extraPage.key);
+        }
         const id = uid("s");
         // Feedback already on the page is from an earlier review that ended
         // without a Send; the browser offers to restore or discard it.
@@ -797,7 +855,10 @@ export function createServer() {
           id,
           entryKey: page.key,
           activeKey: page.key,
-          visited: new Set([page.key]),
+          pages: reportKeys,
+          processed: new Set(),
+          sentAny: false,
+          visited: new Set(reportKeys),
           clients: new Set(),
           lastSeen: Date.now(),
           createdAt: Date.now(),
@@ -918,7 +979,10 @@ export function createServer() {
           const session = sid ? sessions.get(sid) : null;
           seen(session);
           const body = pageState(key, session);
-          if (session) body.others = otherPages(session);
+          if (session) {
+            body.others = otherPages(session);
+            body.report = { pages: reportPages(session), sentAny: session.sentAny };
+          }
           return json(res, 200, body);
         }
 
@@ -1128,7 +1192,7 @@ export function createServer() {
 
         if (action === "send" && req.method === "POST") {
           const body = await readBody(req);
-          const result = sendBatch(body.sessionId, body.note);
+          const result = sendBatch(body.sessionId, body.note, { scope: body.scope === "page" ? "page" : "all", key });
           if (result.error) return json(res, 400, result);
           return json(res, 200, { ok: true, page: pageState(key) });
         }
