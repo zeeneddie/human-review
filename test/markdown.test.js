@@ -74,6 +74,17 @@ test("raw HTML in markdown is visible but never active", () => {
   assert.match(document.body.textContent, /Bad link/, "unsafe links retain their readable label");
 });
 
+test("HTML comments are hidden, other raw HTML stays visible as text", () => {
+  const html = renderMarkdownPage(
+    "# Titel\n\n<!-- ev-tier-version: v2.0 -->\n\nTekst.\n\n<!-- een -->\n<div>zichtbaar</div>\n",
+    "/x/notes.md"
+  );
+  const document = new JSDOM(html).window.document;
+  assert.doesNotMatch(document.body.textContent, /ev-tier-version/, "a comment-only block is not shown");
+  assert.match(document.body.textContent, /<div>zichtbaar<\/div>/, "a block with real HTML stays visible as text");
+  assert.equal(document.querySelectorAll("main div").length, 0, "and never becomes an element");
+});
+
 test("normal Markdown links and images remain available", () => {
   const html = renderMarkdownPage(
     "[Relative](./spec.md) [Web](https://example.com) [Email](mailto:hi@example.com) ![Image](./image.png)",

@@ -77,7 +77,10 @@ function safeUrl(value, { image = false } = {}) {
 // Markdown can contain arbitrary HTML. Show that source as text so event
 // handlers, embeds, SVG, and future browser features can never become active.
 const INERT_RENDERER = new Renderer();
-INERT_RENDERER.html = ({ text }) => escapeHtml(text);
+// Raw HTML stays inert (shown as text), except comments: `<!-- … -->` is never visible content in Markdown
+// (GitHub hides it too). Hiding only blocks that consist of nothing but comments keeps everything else escaped.
+const ONLY_COMMENTS = /^\s*(?:<!--[\s\S]*?-->\s*)+$/;
+INERT_RENDERER.html = ({ text }) => (ONLY_COMMENTS.test(text) ? "" : escapeHtml(text));
 INERT_RENDERER.link = function (token) {
   const href = safeUrl(token.href);
   if (!href) return this.parser.parseInline(token.tokens);
