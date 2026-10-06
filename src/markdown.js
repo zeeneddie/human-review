@@ -14,7 +14,9 @@ const STYLE = `
     font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 72ch; margin: 0 auto; padding: 48px 28px 96px; }
+  /* Volle breedte (besluit Eddie 2026-10-06): de kolom beweegt mee met het venster;
+     alleen een marge die met de schermbreedte meeschaalt. Brede ASCII-platen en tabellen passen zo. */
+  main { width: 100%; max-width: none; margin: 0; padding: 40px clamp(16px, 3vw, 56px) 96px; }
   h1, h2, h3, h4 { line-height: 1.25; margin: 1.6em 0 .5em; }
   h1 { font-size: 2em; margin-top: .4em; }
   h2 { font-size: 1.45em; border-bottom: 1px solid #eceae3; padding-bottom: .25em; }
